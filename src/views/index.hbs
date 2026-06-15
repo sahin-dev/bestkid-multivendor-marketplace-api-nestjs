@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>My API</title>
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: Arial, sans-serif;
+    }
+
+    body {
+      background: #f4f6f8;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    .container {
+      background: white;
+      padding: 40px;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,.1);
+      max-width: 700px;
+      width: 90%;
+      text-align: center;
+    }
+
+    h1 {
+      color: #333;
+      margin-bottom: 10px;
+    }
+
+    p {
+      color: #666;
+      margin-bottom: 25px;
+    }
+
+    .api-links {
+      display: grid;
+      gap: 10px;
+    }
+
+    .api-links a {
+      display: block;
+      text-decoration: none;
+      background: #007bff;
+      color: white;
+      padding: 12px;
+      border-radius: 8px;
+      transition: .3s;
+    }
+
+    .api-links a:hover {
+      background: #0056b3;
+    }
+
+    .footer {
+      margin-top: 25px;
+      color: #888;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>🚀 BestKid API Server</h1>
+
+  <p>
+    Welcome to the BestKid API. Use the endpoints below to test the API.
+  </p>
+
+  <div class="api-links">
+    <a href="/api/users">Users API</a>
+    <a href="/api/products">Products API</a>
+    <a href="/api/auth">Authentication API</a>
+    <a href="/docs">API Documentation</a>
+  </div>
+
+  <div class="footer">
+    Version 1.0.0
+  </div>
+</div>
+
+</body>
+</html>

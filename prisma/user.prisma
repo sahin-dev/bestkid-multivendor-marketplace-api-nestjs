@@ -1,0 +1,58 @@
+model BaseUser {
+  id          Int       @id @default(autoincrement())
+  profile_image_url   String?
+  email       String    @unique
+  full_name   String
+  password    String
+  phone     String
+  email_verifird  Boolean @default(false)
+  is_blocked    Boolean @default(false)
+  
+  role        UserRole  @default(USER)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("users")
+}
+
+model Profile {
+  id  Int  @id  @default(autoincrement())
+  avatar_url  String?
+  userId   Int
+
+  user  BaseUser  @relation(refe)
+
+}
+
+
+model OtpVerification {
+  id          Int   @id @default(autoincrement())
+  requestId   String   @unique
+
+  userId      Int?  
+  purpose     OtpPurpose
+
+  otp     String
+
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(5)
+
+  verified    Boolean  @default(false)
+  used         Boolean @default(false)
+
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([expiresAt])
+}
+
+enum OtpPurpose {
+  EMAIL_VERIFICATION
+  RESET_PASSWORD
+}
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
+enum UserRole {
+  USER
+  ADMIN
+  SELLER
+}

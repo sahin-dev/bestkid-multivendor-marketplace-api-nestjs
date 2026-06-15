@@ -1,0 +1,60 @@
+
+model Product {
+  id          Int       @id @default(autoincrement())
+  name        String
+  description String?
+  original_price       Float
+  discounted_price     Float?
+  discount_percentage   Float?
+  image_urls   String[]
+  categoryId   Int
+  subCategoryId Int
+  condition   Condition @default(NEW)
+  status      ProductStatus @default(INACTIVE)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  reviews     ProductReview[]
+  total_reviews Int      @default(0)
+  average_rating Float? @default(0)
+
+  variants     ProductVariant[]
+  subCategory SubCategory @relation(fields: [subCategoryId], references: [id])
+  category     Category  @relation(fields: [categoryId], references: [id])
+
+}
+
+model ProductVariant {
+  id          Int       @id @default(autoincrement())
+  productId   Int
+  variantName String
+  price       Float
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  product     Product   @relation(fields: [productId], references: [id])
+}
+
+model ProductReview {
+  id          Int       @id @default(autoincrement())
+  productId   Int
+  userId      Int
+  rating      Int
+  review      String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  product     Product   @relation(fields: [productId], references: [id])
+}
+
+enum Condition {
+  NEW
+  USED
+  REFURBISHED
+}
+
+enum ProductStatus {
+  ACTIVE
+  INACTIVE
+  OUT_OF_STOCK
+}

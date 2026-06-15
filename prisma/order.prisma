@@ -1,0 +1,4 @@
+model Order {
+    id  Int @default(autoincrement()) @id
+    userId Int
+}
