@@ -20,8 +20,12 @@ model Profile {
   avatar_url  String?
   userId   Int
 
-  user  BaseUser  @relation(refe)
+  user  BaseUser  @relation(references:[id], fields:[userId])
 
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("profiles") 
 }
 
 
