@@ -6,30 +6,27 @@ export class RegisterUserDto {
     @IsString()
     @IsNotEmpty()
     @ApiProperty()
-    fullName:string
+    fullName: string
 
     @IsString()
     @IsEmail()
     @IsNotEmpty()
     @ApiProperty()
-    email:string
+    email: string
 
     @IsString()
     @IsNotEmpty()
     @ApiProperty()
-    phone:string
+    phone: string
 
     @IsString()
     @IsNotEmpty()
-    @IsStrongPassword({
-        minLength:6
-    })
     @ApiProperty()
     password: string
 
     @IsString()
     @IsNotEmpty()
     @ApiProperty()
-    confirmPassword:string
+    confirmPassword: string
 
 }

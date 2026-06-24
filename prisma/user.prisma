@@ -1,51 +1,48 @@
 model BaseUser {
-  id          Int       @id @default(autoincrement())
-  profile_image_url   String?
-  email       String    @unique
-  full_name   String
-  password    String
-  phone     String
-  email_verifird  Boolean @default(false)
-  is_blocked    Boolean @default(false)
-  
-  role        UserRole  @default(USER)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id             Int      @id @default(autoincrement())
+  email          String   @unique
+  password       String
+  email_verifird Boolean  @default(false)
+  is_blocked     Boolean  @default(false)
+  profile_id     Int?      @unique
+  profile        Profile?  @relation(fields: [profile_id], references: [id])
+  role           UserRole @default(USER)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   @@map("users")
 }
 
 model Profile {
-  id  Int  @id  @default(autoincrement())
-  avatar_url  String?
-  userId   Int
+  id         Int       @id @default(autoincrement())
+  avatar_url String?
+  full_name  String
+  phone      String
+  userId     Int       @unique
+  user       BaseUser?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
 
-  user  BaseUser  @relation(references:[id], fields:[userId])
-
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  @@map("profiles") 
+  @@map("profiles")
 }
 
-
 model OtpVerification {
-  id          Int   @id @default(autoincrement())
-  requestId   String   @unique
+  id        Int    @id @default(autoincrement())
+  requestId String @unique
 
-  userId      Int?  
-  purpose     OtpPurpose
+  userId  Int?
+  purpose OtpPurpose
 
-  otp     String
+  otp String
 
-  attempts    Int      @default(0)
-  maxAttempts Int      @default(5)
+  attempts    Int @default(0)
+  maxAttempts Int @default(5)
 
-  verified    Boolean  @default(false)
-  used         Boolean @default(false)
+  verified Boolean @default(false)
+  used     Boolean @default(false)
 
-  expiresAt   DateTime
-  createdAt   DateTime @default(now())
+  expiresAt DateTime
+  createdAt DateTime @default(now())
 
   @@index([expiresAt])
 }
@@ -54,7 +51,7 @@ enum OtpPurpose {
   EMAIL_VERIFICATION
   RESET_PASSWORD
 }
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
+
 enum UserRole {
   USER
   ADMIN

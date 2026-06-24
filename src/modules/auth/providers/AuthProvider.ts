@@ -9,29 +9,34 @@ import { User } from "../models/User";
 export class AuthProvider {
 
 
-    constructor(private readonly prismaService:PrismaService, 
-        private readonly encoder:EncoderProvider,
-        private readonly jwtService:JwtService
-    ){
+    constructor(private readonly prismaService: PrismaService,
+        private readonly encoder: EncoderProvider,
+        private readonly jwtService: JwtService
+    ) {
 
     }
 
-    public async authenticate (email:string, password:string):Promise<string | Record<string, any>>{
-        const user = await this.prismaService.baseUser.findUnique({where:{email}})
-        if(!user){
+    public async authenticate(email: string, password: string): Promise<string | Record<string, any>> {
+        const user = await this.prismaService.baseUser.findUnique({ where: { email } })
+        if (!user) {
             throw new NotFoundException("User bot found!")
         }
-        if(user.is_blocked){
-            return {"user_is_blocked":true};
+        if (user.is_blocked) {
+            return { "user_is_blocked": true };
         }
-        if(!(await this.encoder.compare(password, user.password))){
+
+        if (user.email_verifird === false) {
+            return { "email_unverified": true }
+        }
+
+        if (!(await this.encoder.compare(password, user.password))) {
             throw new BadRequestException("Invalid username or password!")
         }
 
-        const tokenPayload:TokenPayload = {
-            id:user.id,
-            role:user.role,
-            email:user.email,
+        const tokenPayload: TokenPayload = {
+            id: user.id,
+            role: user.role,
+            email: user.email,
 
         }
 
@@ -39,15 +44,15 @@ export class AuthProvider {
 
         return token
 
-    }   
+    }
 
-    public async verifyToken(token:string):Promise<User>{
+    public async verifyToken(token: string): Promise<User> {
 
-        const payload:TokenPayload = this.jwtService.verify(token)
+        const payload: TokenPayload = this.jwtService.verify(token)
 
-        const user = await this.prismaService.baseUser.findUnique({where:{id:payload.id}})
+        const user = await this.prismaService.baseUser.findUnique({ where: { id: payload.id } })
 
-        if(!user){
+        if (!user) {
             throw new UnauthorizedException("User is not valid!")
         }
 

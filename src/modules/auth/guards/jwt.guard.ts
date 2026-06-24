@@ -33,20 +33,25 @@ export class JwtGuard implements CanActivate {
 
             const user = await this.authProvider.verifyToken(token)
 
-            if(user.is_blocked){
+            if (user.is_blocked) {
                 throw new BadRequestException('Sorry, your are blocked by the admin.Kindly, Contact support.Thanks')
             }
 
             // if(user.is_deleted){
-            //     throw new BadRequestException('Sorry, your account has been deleted. If you think this is a mistake, please contact support. Thanks')
+            //     throw new BadRequestException('Sorry, your account has been deleted. If you think this is a mistake, please contact support.Thanks')
             // }
 
             request['user'] = user;
+            request['payload'] = {
+                id: user.id,
+                role: user.role,
+                email: user.email
+            };
 
             return true
 
         } catch (err) {
-            throw new BadRequestException("Invalid token")
+            throw new BadRequestException("Invalid token!")
         }
 
     }
@@ -66,6 +71,6 @@ export class JwtGuard implements CanActivate {
 
         return token
     }
-    
+
 
 }

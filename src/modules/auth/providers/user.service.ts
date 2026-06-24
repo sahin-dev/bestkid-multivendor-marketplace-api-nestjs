@@ -7,41 +7,70 @@ import { UserRole } from "generated/prisma/enums";
 
 @Injectable()
 export class UserService {
+    constructor(
+        private readonly prismaService: PrismaService,
+        private readonly encoder: EncoderProvider,
+    ) {}
 
-    constructor(private readonly prismaService:PrismaService, private readonly encoder:EncoderProvider){}
+    async saveUser(createUser: RegisterUserDto): Promise<any> {
+        const hashedPassword = await this.encoder.hashPassword(createUser.password, 10);
 
-    async saveUser(createUser:RegisterUserDto):Promise<User>{
-        const user = new User()
-        user.email = createUser.email
-        user.full_name = createUser.fullName
-        user.password = await this.encoder.hashPassword(createUser.password, 10)
-        user.role = UserRole.USER
-        user.phone = createUser.phone
-       
-        return await this.prismaService.baseUser.create({data:user})
+        // Create user and profile in a transaction
+        const result = await this.prismaService.$transaction(async (tx) => {
+            const user = await tx.baseUser.create({
+                data: {
+                    email: createUser.email,
+                    password: hashedPassword,
+                    role: UserRole.USER,
+                },
+            });
+
+            const profile = await tx.profile.create({
+                data: {
+                    full_name: createUser.fullName,
+                    phone: createUser.phone,
+                    userId: user.id,
+                },
+            });
+
+            const updatedUser = await tx.baseUser.update({
+                where: { id: user.id },
+                data: {
+                    profile_id: profile.id,
+                },
+                include: { profile: true },
+            });
+
+            return updatedUser;
+        });
+
+        return result;
     }
 
-    async getUserByEmail(email:string){
-        return await this.prismaService.baseUser.findUnique({where:{email}})
+    async getUserByEmail(email: string) {
+        return await this.prismaService.baseUser.findUnique({
+            where: { email },
+            include: { profile: true },
+        });
     }
 
-    async isUserExist(email:string):Promise<boolean>{
-        const user = await this.prismaService.baseUser.findUnique({where:{email}})
-
-        if(user){
-            return true
-        }
-
-        return false;
-    }
-    
-    async emailVerified(userId:number){
-        const user = await this.prismaService.baseUser.update({where:{id:userId}, data:{email_verifird:true}})
+    async isUserExist(email: string): Promise<boolean> {
+        const user = await this.prismaService.baseUser.findUnique({ where: { email } });
+        return !!user;
     }
 
-    async getUserById(userId:number){
-        return this.prismaService.baseUser.findUnique({where:{id:userId}, omit:{password:true}})
+    async emailVerified(userId: number) {
+        await this.prismaService.baseUser.update({
+            where: { id: userId },
+            data: { email_verifird: true },
+        });
     }
 
-
+    async getUserById(userId: number) {
+        return this.prismaService.baseUser.findUnique({
+            where: { id: userId },
+            omit: { password: true },
+            include: { profile: true },
+        });
+    }
 }

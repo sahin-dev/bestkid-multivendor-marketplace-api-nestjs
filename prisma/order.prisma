@@ -1,4 +1,44 @@
 model Order {
-    id  Int @default(autoincrement()) @id
-    userId Int
+  id          Int         @id @default(autoincrement())
+  userId      Int
+  status      OrderStatus @default(PENDING)
+  total       Float       @default(0)
+
+  shippingAddress String?
+  city            String?
+  postalCode      String?
+  country         String?
+
+  items     OrderItem[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("orders")
+  @@index([userId])
+  @@index([status])
+}
+
+model OrderItem {
+  id        Int   @id @default(autoincrement())
+  orderId   Int
+  productId Int
+  quantity  Int
+  price     Float
+
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@map("order_items")
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
 }

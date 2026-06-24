@@ -9,6 +9,10 @@ import mailerConfig from './config/mailer.config';
 import jwtConfig from './config/jwt.config';
 import { ProfileModule } from './modules/profile/profile.module';
 import { FileUploadModule } from './modules/file-upload/file-upload.module';
+import { CategoryModule } from './modules/category/category.module';
+import { ProductModule } from './modules/product/product.module';
+import { OrderModule } from './modules/order/order.module';
+import { UserModule } from './modules/user/user.module';
 
 @Module({
   imports: [
@@ -18,7 +22,11 @@ import { FileUploadModule } from './modules/file-upload/file-upload.module';
     PrismaModule,
     AuthModule,
     ProfileModule,
-    FileUploadModule
+    FileUploadModule,
+    CategoryModule,
+    ProductModule,
+    OrderModule,
+    UserModule
     // AuthModule.forRoot({
     //   user: {
     //     identifierFields: ['email', 'username'],
