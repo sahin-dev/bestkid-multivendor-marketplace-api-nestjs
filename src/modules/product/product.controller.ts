@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req } from "@nestjs/common";
 import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
 import { GetUser, Public, Roles } from "src/common/decorators";
 import { ProductService } from "./product.service";
@@ -7,6 +7,7 @@ import { UpdateProductDto } from "./dtos/update-product.dto";
 import { CreateVariantDto } from "./dtos/create-variant.dto";
 import { CreateReviewDto } from "./dtos/create-review.dto";
 import { ProductQueryDto } from "./dtos/product-query.dto";
+import { UpdateProductAuthStatusDto } from "./dtos/update-product-auth-status.dto";
 
 @ApiTags("Products")
 @Controller("products")
@@ -16,8 +17,8 @@ export class ProductController {
     @Post()
     @ApiBearerAuth("access-token")
     @Roles("ADMIN", "SELLER")
-    async createProduct(@Body() dto: CreateProductDto) {
-        return this.productService.createProduct(dto);
+    async createProduct(@GetUser("id") userId: number, @Body() dto: CreateProductDto) {
+        return this.productService.createProduct(userId, dto);
     }
 
     @Get()
@@ -28,8 +29,9 @@ export class ProductController {
 
     @Get(":id")
     @Public()
-    async findProductById(@Param("id", ParseIntPipe) id: number) {
-        return this.productService.findProductById(id);
+    async findProductById(@Param("id", ParseIntPipe) id: number, @Req() req: Request) {
+        const user = req["user"] as { id: number } | undefined;
+        return this.productService.findProductById(id, user?.id);
     }
 
     @Patch(":id")
@@ -77,5 +79,22 @@ export class ProductController {
     @Public()
     async findReviews(@Param("id", ParseIntPipe) productId: number) {
         return this.productService.findReviews(productId);
+    }
+
+    @Get("admin/all")
+    @ApiBearerAuth("access-token")
+    @Roles("ADMIN")
+    async findAllProductsAdmin(@Query() query: ProductQueryDto) {
+        return this.productService.findAllProductsAdmin(query);
+    }
+
+    @Patch("admin/:id/auth-status")
+    @ApiBearerAuth("access-token")
+    @Roles("ADMIN")
+    async updateProductAuthStatusAdmin(
+        @Param("id", ParseIntPipe) productId: number,
+        @Body() dto: UpdateProductAuthStatusDto,
+    ) {
+        return this.productService.updateProductAuthStatusAdmin(productId, dto.status);
     }
 }

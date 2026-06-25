@@ -1,0 +1,21 @@
+model FaqCategory {
+    id Int @id @default(autoincrement())
+    name String
+    faqs Faq[]
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@map("faq_categories")
+}
+
+model Faq {
+    id Int @id @default(autoincrement())
+    categoryId Int
+    question String
+    answer String
+    category FaqCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@map("faqs")
+}

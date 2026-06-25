@@ -1,11 +1,12 @@
 import { Injectable, NotFoundException, BadRequestException } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
+import { UserRole } from "generated/prisma/client";
 
 @Injectable()
 export class AdminUserService {
     constructor(private readonly prismaService: PrismaService) {}
 
-    async findAllUsers(page = 1, limit = 10, search?: string) {
+    async findAllUsers(page = 1, limit = 10, search?: string, role?: UserRole, isBlocked?: boolean) {
         const skip = (page - 1) * limit;
 
         const whereClause: any = {};
@@ -18,6 +19,12 @@ export class AdminUserService {
                     },
                 },
             ];
+        }
+        if (role) {
+            whereClause.role = role;
+        }
+        if (isBlocked !== undefined) {
+            whereClause.is_blocked = isBlocked;
         }
 
         const [data, total] = await Promise.all([
@@ -72,6 +79,65 @@ export class AdminUserService {
             omit: { password: true },
             include: { profile: true },
         });
+    }
+
+    async toggleBlockUser(id: number) {
+        const user = await this.prismaService.baseUser.findUnique({ where: { id } });
+        if (!user) {
+            throw new NotFoundException(`User with ID ${id} not found`);
+        }
+        if (user.role === "ADMIN") {
+            throw new BadRequestException("Admin users cannot be blocked");
+        }
+
+        return this.prismaService.baseUser.update({
+            where: { id },
+            data: { is_blocked: !user.is_blocked },
+            omit: { password: true },
+            include: { profile: true },
+        });
+    }
+
+    async updateUserRole(id: number, role: UserRole) {
+        const user = await this.prismaService.baseUser.findUnique({ where: { id } });
+        if (!user) {
+            throw new NotFoundException(`User with ID ${id} not found`);
+        }
+
+        return this.prismaService.baseUser.update({
+            where: { id },
+            data: { role },
+            omit: { password: true },
+            include: { profile: true },
+        });
+    }
+
+    async findUserDetail(id: number) {
+        const user = await this.prismaService.baseUser.findUnique({
+            where: { id },
+            include: {
+                profile: true,
+                buyer_orders: {
+                    take: 10,
+                    orderBy: { createdAt: "desc" },
+                },
+                seller_orders: {
+                    take: 10,
+                    orderBy: { createdAt: "desc" },
+                },
+                products: {
+                    take: 10,
+                    orderBy: { createdAt: "desc" },
+                },
+            },
+            omit: { password: true },
+        });
+
+        if (!user) {
+            throw new NotFoundException(`User with ID ${id} not found`);
+        }
+
+        return user;
     }
 
     async deleteUser(id: number) {

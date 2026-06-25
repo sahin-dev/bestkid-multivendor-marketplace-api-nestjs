@@ -1,21 +1,31 @@
 model Order {
   id          Int         @id @default(autoincrement())
   userId      Int
+  sellerId    Int
   status      OrderStatus @default(PENDING)
   total       Float       @default(0)
+
+  // Delivery info snapshot at order time
+  delivery_partner  String?
+  delivery_cost     Float   @default(0)
+  delivery_days_min Int?
+  delivery_days_max Int?
 
   shippingAddress String?
   city            String?
   postalCode      String?
   country         String?
 
-  items     OrderItem[]
+  items    OrderItem[]
+  user     BaseUser    @relation("BuyerOrders",  fields: [userId],   references: [id])
+  seller   BaseUser    @relation("SellerOrders", fields: [sellerId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("orders")
   @@index([userId])
+  @@index([sellerId])
   @@index([status])
 }
 
@@ -23,12 +33,15 @@ model OrderItem {
   id        Int   @id @default(autoincrement())
   orderId   Int
   productId Int
+  variantId Int?
   quantity  Int
   price     Float
 
-  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order          Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  returnRequests ReturnRequest[]
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("order_items")
 }

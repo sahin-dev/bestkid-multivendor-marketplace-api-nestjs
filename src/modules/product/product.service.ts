@@ -1,14 +1,15 @@
-import { Injectable, NotFoundException, BadRequestException } from "@nestjs/common";
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateProductDto } from "./dtos/create-product.dto";
 import { UpdateProductDto } from "./dtos/update-product.dto";
 import { CreateVariantDto } from "./dtos/create-variant.dto";
 import { CreateReviewDto } from "./dtos/create-review.dto";
 import { ProductQueryDto } from "./dtos/product-query.dto";
+import { AuthenticationStatus } from "generated/prisma/client";
 
 @Injectable()
 export class ProductService {
-    constructor(private readonly prismaService: PrismaService) {}
+    constructor(private readonly prismaService: PrismaService) { }
 
     private calculateDiscounts(original: number, discounted?: number, percentage?: number) {
         let finalDiscounted = discounted ?? null;
@@ -29,7 +30,16 @@ export class ProductService {
         return { discounted_price: finalDiscounted, discount_percentage: finalPercentage };
     }
 
-    async createProduct(dto: CreateProductDto) {
+    async createProduct(userId: number, dto: CreateProductDto) {
+        // Check Stripe onboarding
+        const seller = await this.prismaService.baseUser.findUnique({
+            where: { id: userId },
+            select: { stripe_onboarding_complete: true },
+        });
+        if (!seller?.stripe_onboarding_complete) {
+            throw new ForbiddenException("You must complete Stripe onboarding before listing products.");
+        }
+
         // Validate category
         const category = await this.prismaService.category.findUnique({
             where: { id: dto.categoryId },
@@ -52,6 +62,7 @@ export class ProductService {
             data: {
                 ...dto,
                 ...discountData,
+                userId,
             },
             include: {
                 category: true,
@@ -129,10 +140,19 @@ export class ProductService {
         };
     }
 
-    async findProductById(id: number) {
+    async findProductById(id: number, userId?: number) {
         const product = await this.prismaService.product.findUnique({
             where: { id },
             include: {
+                user: {
+                    select: {
+                        id: true,
+                        email: true,
+                        stripe_onboarding_complete: true,
+                        profile: { select: { full_name: true, avatar_url: true, country: true } },
+                        delivery_option: true,
+                    },
+                },
                 category: true,
                 subCategory: true,
                 variants: true,
@@ -142,6 +162,20 @@ export class ProductService {
 
         if (!product) {
             throw new NotFoundException(`Product with ID ${id} not found`);
+        }
+
+        // Track view — fire-and-forget (don't await to keep response fast)
+        this.prismaService.product.update({ where: { id }, data: { views: { increment: 1 } } }).catch(() => {});
+
+        // Track recently viewed for logged-in users
+        if (userId) {
+            this.prismaService.recentlyView
+                .upsert({
+                    where: { userId_productId: { userId, productId: id } },
+                    update: { viewedAt: new Date() },
+                    create: { userId, productId: id },
+                })
+                .catch(() => {});
         }
 
         return product;
@@ -267,6 +301,84 @@ export class ProductService {
             where: { productId },
             orderBy: {
                 createdAt: "desc",
+            },
+        });
+    }
+
+    async findAllProductsAdmin(query: any) {
+        const { page = 1, limit = 10, search, categoryId, subCategoryId, status, sellerId } = query;
+        const skip = (page - 1) * limit;
+
+        const whereClause: any = {};
+
+        if (search) {
+            whereClause.OR = [
+                { name: { contains: search, mode: "insensitive" } },
+                { description: { contains: search, mode: "insensitive" } },
+            ];
+        }
+
+        if (categoryId) {
+            whereClause.categoryId = categoryId;
+        }
+
+        if (subCategoryId) {
+            whereClause.subCategoryId = subCategoryId;
+        }
+
+        if (status) {
+            whereClause.status = status;
+        }
+
+        if (sellerId) {
+            whereClause.userId = sellerId;
+        }
+
+        const [data, total] = await Promise.all([
+            this.prismaService.product.findMany({
+                where: whereClause,
+                skip,
+                take: limit,
+                orderBy: { createdAt: "desc" },
+                include: {
+                    category: true,
+                    subCategory: true,
+                    user: {
+                        select: {
+                            id: true,
+                            email: true,
+                            profile: { select: { full_name: true } },
+                        },
+                    },
+                },
+            }),
+            this.prismaService.product.count({ where: whereClause }),
+        ]);
+
+        return {
+            data,
+            meta: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit),
+            },
+        };
+    }
+
+    async updateProductAuthStatusAdmin(id: number, status: AuthenticationStatus) {
+        const product = await this.prismaService.product.findUnique({ where: { id } });
+        if (!product) {
+            throw new NotFoundException(`Product with ID ${id} not found`);
+        }
+
+        const isAuthenticated = status === AuthenticationStatus.VERIFIED;
+
+        return this.prismaService.product.update({
+            where: { id },
+            data: {
+                authentication_status: status,
+                is_authenticated: isAuthenticated,
             },
         });
     }

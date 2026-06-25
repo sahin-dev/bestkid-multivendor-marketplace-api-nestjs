@@ -1,0 +1,22 @@
+model SellerDeliveryOption {
+  id       Int      @id @default(autoincrement())
+  sellerId Int      @unique
+  seller   BaseUser @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+
+  // Domestic delivery (applied when buyer country == seller country)
+  domestic_partner  String?
+  domestic_cost     Float?
+  domestic_days_min Int?
+  domestic_days_max Int?
+
+  // International delivery (applied when buyer country != seller country)
+  international_partner  String?
+  international_cost     Float?
+  international_days_min Int?
+  international_days_max Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("seller_delivery_options")
+}

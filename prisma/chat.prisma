@@ -1,0 +1,41 @@
+model ChatRoom {
+  id        Int      @id @default(autoincrement())
+  buyerId   Int
+  sellerId  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  buyer   BaseUser    @relation("BuyerChatRoom", fields: [buyerId], references: [id])
+  seller  BaseUser    @relation("SellerChatRoom", fields: [sellerId], references: [id])
+  messages ChatMessage[]
+
+  @@index([buyerId])
+  @@index([sellerId])
+  @@map("chat_rooms")
+}
+
+model ChatMessage {
+  id          Int         @id @default(autoincrement())
+  chatRoomId Int
+  senderId  Int
+  message   String?
+  file_url  String?
+  is_read   Boolean   @default(false)
+  is_delivered  Boolean @default(false)
+  type      MessageType @default(TEXT)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  chatRoom  ChatRoom @relation(fields: [chatRoomId], references: [id])
+  sender    BaseUser     @relation(fields: [senderId], references: [id])
+
+  @@index([chatRoomId])
+  @@index([senderId])
+  @@map("chat_messages")
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+}

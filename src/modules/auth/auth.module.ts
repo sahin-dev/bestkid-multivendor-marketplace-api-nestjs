@@ -21,7 +21,7 @@ import { RolesGuard } from 'src/common/guards/roles.guards';
     { provide: APP_GUARD, useClass: JwtGuard },
     { provide: APP_GUARD, useClass: RolesGuard },],
   controllers:[AuthController],
-  exports:[UserService, EncoderProvider],
+  exports:[UserService, EncoderProvider, AuthProvider],
   imports:[PrismaModule, JwtModule.register({
     global:true,
     secret:"MySecret",

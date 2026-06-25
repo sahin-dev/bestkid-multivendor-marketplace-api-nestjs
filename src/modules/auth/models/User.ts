@@ -10,6 +10,8 @@ export class User implements BaseUser {
     is_blocked: boolean;
     profile_id: number | null;
     role: UserRole;
+    stripe_account_id: string | null;
+    stripe_onboarding_complete: boolean;
     createdAt: Date;
     updatedAt: Date;
 

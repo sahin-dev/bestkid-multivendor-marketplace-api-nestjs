@@ -1,0 +1,13 @@
+model RecentlyView {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  productId Int
+  viewedAt  DateTime @default(now())
+
+  user    BaseUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, productId])
+  @@index([userId])
+  @@map("recently_viewed")
+}

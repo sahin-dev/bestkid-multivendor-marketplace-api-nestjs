@@ -1,0 +1,13 @@
+model CompanyInfo {
+    id  Int @id @default(autoincrement())
+    company_name String
+    business_type  String
+    contact_email String
+    contact_address String
+    website String
+    jurisdiction String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@map("company_info")
+}

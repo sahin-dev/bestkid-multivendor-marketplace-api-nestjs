@@ -7,8 +7,25 @@ model BaseUser {
   profile_id     Int?      @unique
   profile        Profile?  @relation(fields: [profile_id], references: [id])
   role           UserRole @default(USER)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+
+  // Stripe seller onboarding
+  stripe_account_id          String?
+  stripe_onboarding_complete Boolean @default(false)
+
+  products        Product[]
+  buyer_chat      ChatRoom[] @relation("BuyerChatRoom")
+  seller_chat     ChatRoom[] @relation("SellerChatRoom")
+  cart            Cart?
+  notifications   Notification[]
+  messages        ChatMessage[]
+  recently_viewed RecentlyView[]
+  buyer_orders    Order[]    @relation("BuyerOrders")
+  seller_orders   Order[]    @relation("SellerOrders")
+  return_requests ReturnRequest[]
+  delivery_option SellerDeliveryOption?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@map("users")
 }
@@ -18,6 +35,7 @@ model Profile {
   avatar_url String?
   full_name  String
   phone      String
+  country    String?
   userId     Int       @unique
   user       BaseUser?
   createdAt  DateTime  @default(now())

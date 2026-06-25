@@ -1,0 +1,24 @@
+model ReturnRequest {
+  id          Int           @id @default(autoincrement())
+  orderItemId Int
+  userId      Int
+  reason      String
+  images      String[]
+  status      ReturnStatus  @default(PENDING)
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id])
+  user      BaseUser  @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([orderItemId])
+  @@map("return_requests")
+}
+
+enum ReturnStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}

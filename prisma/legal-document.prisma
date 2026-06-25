@@ -1,0 +1,18 @@
+model  LegalDocument {
+    id Int @id @default(autoincrement())
+    type LegalDocumentType
+    content String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@map("legal_documents")
+}
+
+enum LegalDocumentType {
+    TERMS_AND_CONDITIONS
+    PRIVACY_POLICY
+    REFUND_POLICY
+    SHIPPING_POLICY
+    RETURN_POLICY
+    
+}

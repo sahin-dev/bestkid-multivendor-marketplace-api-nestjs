@@ -8,16 +8,22 @@ model Product {
   image_urls          String[]
   categoryId          Int
   subCategoryId       Int
+  userId              Int
   condition           Condition     @default(NEW)
   status              ProductStatus @default(INACTIVE)
+  views               Int           @default(0)
 
-  reviews        ProductReview[]
-  total_reviews  Int             @default(0)
-  average_rating Float?          @default(0)
-
-  variants    ProductVariant[]
-  subCategory SubCategory      @relation(fields: [subCategoryId], references: [id])
-  category    Category         @relation(fields: [categoryId], references: [id])
+  reviews             ProductReview[]
+  total_reviews       Int             @default(0)
+  average_rating      Float?          @default(0)
+  cart_listed         CartItem[]
+  recently_viewed     RecentlyView[]
+  is_authenticated    Boolean              @default(false)
+  authentication_status AuthenticationStatus @default(PENDING)
+  variants            ProductVariant[]
+  subCategory         SubCategory     @relation(fields: [subCategoryId], references: [id])
+  category            Category        @relation(fields: [categoryId], references: [id])
+  user                BaseUser        @relation(fields: [userId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -33,7 +39,8 @@ model ProductVariant {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  product Product @relation(fields: [productId], references: [id])
+  product     Product  @relation(fields: [productId], references: [id])
+  cart_listed CartItem[]
 }
 
 model ProductReview {
@@ -42,7 +49,6 @@ model ProductReview {
   userId    Int
   rating    Int
   review    String?
-
 
   product Product @relation(fields: [productId], references: [id])
 
@@ -60,4 +66,10 @@ enum ProductStatus {
   ACTIVE
   INACTIVE
   OUT_OF_STOCK
+}
+
+enum AuthenticationStatus {
+  PENDING
+  VERIFIED
+  NOT_VERIFIED
 }
