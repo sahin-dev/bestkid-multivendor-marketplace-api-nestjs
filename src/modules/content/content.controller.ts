@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
-import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiBody, ApiParam, ApiQuery, ApiTags } from "@nestjs/swagger";
 import { Public, Roles } from "src/common/decorators";
 import { ContentService } from "./content.service";
 import { CreateFaqCategoryDto } from "./dtos/create-faq-category.dto";
@@ -27,6 +27,7 @@ export class ContentController {
     @Post("faq/categories")
     @ApiBearerAuth("access-token")
     @Roles("ADMIN")
+    @ApiBody({ type: CreateFaqCategoryDto })
     createFaqCategory(@Body() dto: CreateFaqCategoryDto) {
         return this.contentService.createFaqCategory(dto);
     }
@@ -42,6 +43,7 @@ export class ContentController {
     @Post("faq")
     @ApiBearerAuth("access-token")
     @Roles("ADMIN")
+    @ApiBody({ type: CreateFaqDto })
     createFaq(@Body() dto: CreateFaqDto) {
         return this.contentService.createFaq(dto);
     }
@@ -49,6 +51,8 @@ export class ContentController {
     @Patch("faq/:id")
     @ApiBearerAuth("access-token")
     @Roles("ADMIN")
+    @ApiParam({ name: "id", type: Number })
+    @ApiBody({ type: UpdateFaqDto })
     updateFaq(@Param("id", ParseIntPipe) id: number, @Body() dto: UpdateFaqDto) {
         return this.contentService.updateFaq(id, dto);
     }
@@ -56,6 +60,7 @@ export class ContentController {
     @Delete("faq/:id")
     @ApiBearerAuth("access-token")
     @Roles("ADMIN")
+    @ApiParam({ name: "id", type: Number })
     deleteFaq(@Param("id", ParseIntPipe) id: number) {
         return this.contentService.deleteFaq(id);
     }
@@ -64,6 +69,7 @@ export class ContentController {
 
     @Get("legal/:type")
     @Public()
+    @ApiParam({ name: "type", enum: LegalDocumentType })
     getLegalDocument(@Param("type") type: LegalDocumentType) {
         return this.contentService.getLegalDocument(type);
     }
@@ -71,6 +77,8 @@ export class ContentController {
     @Patch("legal/:type")
     @ApiBearerAuth("access-token")
     @Roles("ADMIN")
+    @ApiParam({ name: "type", enum: LegalDocumentType })
+    @ApiBody({ type: UpsertLegalDto })
     upsertLegalDocument(@Param("type") type: LegalDocumentType, @Body() dto: UpsertLegalDto) {
         return this.contentService.upsertLegalDocument(type, dto);
     }
@@ -86,6 +94,7 @@ export class ContentController {
     @Patch("company")
     @ApiBearerAuth("access-token")
     @Roles("ADMIN")
+    @ApiBody({ type: UpsertCompanyInfoDto })
     upsertCompanyInfo(@Body() dto: UpsertCompanyInfoDto) {
         return this.contentService.upsertCompanyInfo(dto);
     }
@@ -94,6 +103,7 @@ export class ContentController {
 
     @Post("contact")
     @Public()
+    @ApiBody({ type: CreateContactRequestDto })
     submitContactRequest(@Body() dto: CreateContactRequestDto) {
         return this.contentService.submitContactRequest(dto);
     }
@@ -101,6 +111,8 @@ export class ContentController {
     @Get("contact/admin")
     @ApiBearerAuth("access-token")
     @Roles("ADMIN")
+    @ApiQuery({ name: "page", required: false, type: Number })
+    @ApiQuery({ name: "limit", required: false, type: Number })
     findAllContactRequests(
         @Query("page") page?: number,
         @Query("limit") limit?: number,
@@ -111,6 +123,8 @@ export class ContentController {
     @Patch("contact/admin/:id/reply")
     @ApiBearerAuth("access-token")
     @Roles("ADMIN")
+    @ApiParam({ name: "id", type: Number })
+    @ApiBody({ type: ReplyContactRequestDto })
     replyToContactRequest(
         @Param("id", ParseIntPipe) id: number,
         @Body() dto: ReplyContactRequestDto,

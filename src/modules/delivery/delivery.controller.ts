@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, ParseIntPipe, Put } from "@nestjs/common";
-import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiTags } from "@nestjs/swagger";
 import { GetUser, Public, Roles } from "src/common/decorators";
 import { DeliveryService } from "./delivery.service";
 import { UpsertDeliveryDto } from "./dtos/upsert-delivery.dto";
@@ -13,6 +13,7 @@ export class DeliveryController {
     @ApiBearerAuth("access-token")
     @Roles("SELLER", "ADMIN")
     @ApiOperation({ summary: "Seller: create or update domestic and international delivery options" })
+    @ApiBody({ type: UpsertDeliveryDto })
     async upsertDelivery(@GetUser("id") sellerId: number, @Body() dto: UpsertDeliveryDto) {
         return this.deliveryService.upsertDeliveryOptions(sellerId, dto);
     }
@@ -28,6 +29,7 @@ export class DeliveryController {
     @Get(":sellerId")
     @Public()
     @ApiOperation({ summary: "Get a seller's delivery options (public)" })
+    @ApiParam({ name: "sellerId", type: Number })
     async getSellerDelivery(@Param("sellerId", ParseIntPipe) sellerId: number) {
         return this.deliveryService.getSellerDeliveryOptions(sellerId);
     }

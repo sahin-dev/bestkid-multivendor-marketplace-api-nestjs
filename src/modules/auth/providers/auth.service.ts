@@ -71,6 +71,11 @@ export class AuthService {
     async verifyOtp(verifyOtpDto: verifyOtpDto) {
         this.logger.debug(verifyOtpDto)
         const otpVerification = await this.otpService.verifyOtp(verifyOtpDto.requestId, verifyOtpDto.otp)
+
+        if (otpVerification?.purpose === OtpPurpose.EMAIL_VERIFICATION && otpVerification?.userId) {
+            await this.userService.emailVerified(otpVerification.userId)
+        }
+
         return otpVerification
     }
 

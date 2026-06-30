@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Req } from "@nestjs/common";
-import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiTags } from "@nestjs/swagger";
 import { GetUser } from "src/common/decorators";
 import { CartService } from "./cart.service";
 import { AddToCartDto } from "./dtos/add-to-cart.dto";
@@ -22,12 +22,15 @@ export class CartController {
 
     @Post("items")
     @ApiOperation({ summary: "Add item to cart" })
+    @ApiBody({ type: AddToCartDto })
     async addItem(@GetUser("id") userId: number, @Body() dto: AddToCartDto) {
         return this.cartService.addItem(userId, dto);
     }
 
     @Patch("items/:itemId")
     @ApiOperation({ summary: "Update quantity of a cart item" })
+    @ApiParam({ name: "itemId", type: Number })
+    @ApiBody({ type: UpdateCartItemDto })
     async updateItem(
         @GetUser("id") userId: number,
         @Param("itemId", ParseIntPipe) itemId: number,
@@ -38,6 +41,7 @@ export class CartController {
 
     @Delete("items/:itemId")
     @ApiOperation({ summary: "Remove a specific item from cart" })
+    @ApiParam({ name: "itemId", type: Number })
     async removeItem(
         @GetUser("id") userId: number,
         @Param("itemId", ParseIntPipe) itemId: number,

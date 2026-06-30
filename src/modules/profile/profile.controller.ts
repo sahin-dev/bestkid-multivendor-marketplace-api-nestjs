@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Patch, Put, Req, UploadedFile, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
-import { ApiBearerAuth } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation } from "@nestjs/swagger";
 import { UpdateProfileDto } from "./dtos/updateProfile.dto";
 import { ProfileService } from "./profile.service";
 import { User } from "../auth/models/User";
@@ -27,6 +27,9 @@ export class ProfileController{
     }
 
     @Patch()
+    @ApiOperation({ summary: "Update the authenticated user's profile" })
+    @ApiConsumes('multipart/form-data')
+    @ApiBody({ type: UpdateProfileDto })
     @UseInterceptors(FileInterceptor('file'))
     updateUserProfile(@Req() request:Request, @Body()updateProfileDto:UpdateProfileDto, @UploadedFile() file?:Express.Multer.File){
 
@@ -40,7 +43,9 @@ export class ProfileController{
     }   
 
     @Patch("update-password")
-    async updatePassword(@Req() request:Request, updatePasswordDto:UpdatePasswordDto){
+    @ApiOperation({ summary: "Change the authenticated user's password" })
+    @ApiBody({ type: UpdatePasswordDto })
+    async updatePassword(@Req() request:Request, @Body() updatePasswordDto:UpdatePasswordDto){
 
         const user = request['user'] as User
 

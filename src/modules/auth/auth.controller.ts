@@ -6,7 +6,7 @@ import { User } from "./models/User";
 import { verifyOtpDto } from "./dtos/verifyOtp.dto";
 import { plainToInstance } from "class-transformer";
 import { RegisterUserResponseDto } from "./dtos/RegisterUserResponseDto";
-import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { Public } from "src/common/decorators";
 import { ResendOtpDto } from "./dtos/ResendOtp.dto";
 import { ForgotPasswordDto } from "./dtos/ForgotPasswordDto";
@@ -22,6 +22,7 @@ export class AuthController {
     @Post("register")
     @Public()
     @ApiOperation({ summary: "Register a new user — returns OTP requestId for email verification" })
+    @ApiBody({ type: RegisterUserDto })
     async register(@Body() registerUserDto: RegisterUserDto) {
         const registrationResponse = await this.authService.registerUser(registerUserDto)
         return plainToInstance(RegisterUserResponseDto, registrationResponse, {
@@ -33,6 +34,7 @@ export class AuthController {
     @Public()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Login — returns JWT or { email_unverified: true } or { user_is_blocked: true }" })
+    @ApiBody({ type: SigninDto })
     async login(@Body() signinDto: SigninDto) {
         return this.authService.login(signinDto)
     }
@@ -41,6 +43,7 @@ export class AuthController {
     @HttpCode(HttpStatus.OK)
     @Public()
     @ApiOperation({ summary: "Verify email OTP" })
+    @ApiBody({ type: verifyOtpDto })
     async verifyOtp(@Body() verifyOtpDto: verifyOtpDto) {
         return this.authService.verifyOtp(verifyOtpDto)
     }
@@ -49,6 +52,7 @@ export class AuthController {
     @Public()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Resend email verification OTP" })
+    @ApiBody({ type: ResendOtpDto })
     async resendOtp(@Body() resendOtpDto: ResendOtpDto) {
         return this.authService.resendOtp(resendOtpDto.email)
     }
@@ -59,6 +63,7 @@ export class AuthController {
     @Public()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Send password reset OTP to email" })
+    @ApiBody({ type: ForgotPasswordDto })
     async forgotPassword(@Body() dto: ForgotPasswordDto) {
         return this.authService.forgotPassword(dto)
     }
@@ -67,6 +72,7 @@ export class AuthController {
     @Public()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Verify the password reset OTP" })
+    @ApiBody({ type: VerifyResetOtpDto })
     async verifyResetOtp(@Body() dto: VerifyResetOtpDto) {
         return this.authService.verifyResetOtp(dto)
     }
@@ -75,6 +81,7 @@ export class AuthController {
     @Public()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Reset password using verified OTP requestId" })
+    @ApiBody({ type: ResetPasswordDto })
     async resetPassword(@Body() dto: ResetPasswordDto) {
         return this.authService.resetPassword(dto)
     }
