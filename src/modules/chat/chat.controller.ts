@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
 import { ApiBearerAuth, ApiBody, ApiParam, ApiQuery, ApiTags } from "@nestjs/swagger";
 import { GetUser } from "src/common/decorators";
+import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { ChatService } from "./chat.service";
 import { CreateRoomDto } from "./dtos/create-room.dto";
 import { MessagesQueryDto } from "./dtos/messages-query.dto";
@@ -18,8 +19,10 @@ export class ChatController {
     }
 
     @Get("rooms")
-    async getUserRooms(@GetUser("id") userId: number) {
-        return this.chatService.getUserRooms(userId);
+    @ApiQuery({ name: "page", required: false, type: Number })
+    @ApiQuery({ name: "limit", required: false, type: Number })
+    async getUserRooms(@GetUser("id") userId: number, @Query() query: PaginationDto) {
+        return this.chatService.getUserRooms(userId, query);
     }
 
     @Get("rooms/:id/messages")

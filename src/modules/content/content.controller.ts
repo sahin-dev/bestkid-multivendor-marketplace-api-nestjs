@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
 import { ApiBearerAuth, ApiBody, ApiParam, ApiQuery, ApiTags } from "@nestjs/swagger";
 import { Public, Roles } from "src/common/decorators";
+import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { ContentService } from "./content.service";
 import { CreateFaqCategoryDto } from "./dtos/create-faq-category.dto";
 import { CreateFaqDto } from "./dtos/create-faq.dto";
@@ -20,8 +21,10 @@ export class ContentController {
 
     @Get("faq/categories")
     @Public()
-    getFaqCategories() {
-        return this.contentService.getFaqCategories();
+    @ApiQuery({ name: "page", required: false, type: Number })
+    @ApiQuery({ name: "limit", required: false, type: Number })
+    getFaqCategories(@Query() query: PaginationDto) {
+        return this.contentService.getFaqCategories(query);
     }
 
     @Post("faq/categories")
@@ -36,8 +39,10 @@ export class ContentController {
 
     @Get("faq")
     @Public()
-    getFaqs() {
-        return this.contentService.getFaqs();
+    @ApiQuery({ name: "page", required: false, type: Number })
+    @ApiQuery({ name: "limit", required: false, type: Number })
+    getFaqs(@Query() query: PaginationDto) {
+        return this.contentService.getFaqs(query);
     }
 
     @Post("faq")

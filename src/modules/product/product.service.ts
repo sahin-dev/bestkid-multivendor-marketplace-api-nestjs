@@ -6,6 +6,7 @@ import { CreateVariantDto } from "./dtos/create-variant.dto";
 import { CreateReviewDto } from "./dtos/create-review.dto";
 import { ProductQueryDto } from "./dtos/product-query.dto";
 import { AuthenticationStatus } from "generated/prisma/client";
+import { PaginationDto } from "src/common/dtos/pagination.dto";
 
 @Injectable()
 export class ProductService {
@@ -294,15 +295,33 @@ export class ProductService {
         return newReview;
     }
 
-    async findReviews(productId: number) {
+    async findReviews(productId: number, query: PaginationDto = { page: 1, limit: 10 }) {
         await this.findProductById(productId);
 
-        return this.prismaService.productReview.findMany({
-            where: { productId },
-            orderBy: {
-                createdAt: "desc",
+        const { page = 1, limit = 10 } = query ?? {};
+        const skip = (page - 1) * limit;
+
+        const [data, total] = await Promise.all([
+            this.prismaService.productReview.findMany({
+                where: { productId },
+                skip,
+                take: limit,
+                orderBy: {
+                    createdAt: "desc",
+                },
+            }),
+            this.prismaService.productReview.count({ where: { productId } }),
+        ]);
+
+        return {
+            data,
+            meta: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit),
             },
-        });
+        };
     }
 
     async findAllProductsAdmin(query: any) {

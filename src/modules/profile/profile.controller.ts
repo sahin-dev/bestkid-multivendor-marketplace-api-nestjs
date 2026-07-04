@@ -29,7 +29,25 @@ export class ProfileController{
     @Patch()
     @ApiOperation({ summary: "Update the authenticated user's profile" })
     @ApiConsumes('multipart/form-data')
-    @ApiBody({ type: UpdateProfileDto })
+    @ApiBody({
+        schema: {
+            type: 'object',
+            properties: {
+                full_name: {
+                    type: 'string',
+                    example: 'John Doe',
+                },
+                phone: {
+                    type: 'string',
+                    example: '+8801712345678',
+                },
+                file: {
+                    type: 'string',
+                    format: 'binary',
+                },
+            },
+        },
+    })
     @UseInterceptors(FileInterceptor('file'))
     updateUserProfile(@Req() request:Request, @Body()updateProfileDto:UpdateProfileDto, @UploadedFile() file?:Express.Multer.File){
 

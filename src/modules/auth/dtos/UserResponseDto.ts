@@ -1,5 +1,18 @@
 import { Expose } from "class-transformer";
+import { ValidateNested } from "class-validator";
 import { UserRole } from "generated/prisma/enums";
+import { SanitizeUrl } from "src/common/decorators";
+
+export class UserProfileResponseDto {
+    @Expose()
+    full_name: string;
+
+    @Expose()
+    phone: string;
+
+    @Expose()
+    avatar_url: string;
+}
 
 export class UserResponseDto {
     @Expose()
@@ -8,11 +21,6 @@ export class UserResponseDto {
     @Expose()
     email: string;
 
-    @Expose()
-    full_name: string;
-
-    @Expose()
-    phone: string;
 
     @Expose()
     email_verifird: boolean;
@@ -22,6 +30,10 @@ export class UserResponseDto {
 
     @Expose()
     role: UserRole;
+
+    @Expose()
+    @ValidateNested()
+    profile: UserProfileResponseDto
 
     @Expose()
     createdAt: Date;

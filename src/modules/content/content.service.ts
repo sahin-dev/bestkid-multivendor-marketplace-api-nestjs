@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
+import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateFaqCategoryDto } from "./dtos/create-faq-category.dto";
 import { CreateFaqDto } from "./dtos/create-faq.dto";
@@ -15,10 +16,20 @@ export class ContentService {
 
     // ─── FAQ Categories ───────────────────────────────────────────────────────────
 
-    async getFaqCategories() {
-        return this.prismaService.faqCategory.findMany({
-            orderBy: { createdAt: "asc" },
-        });
+    async getFaqCategories(query: PaginationDto = { page: 1, limit: 10 }) {
+        const { page = 1, limit = 10 } = query ?? {};
+        const skip = (page - 1) * limit;
+
+        const [data, total] = await Promise.all([
+            this.prismaService.faqCategory.findMany({
+                skip,
+                take: limit,
+                orderBy: { createdAt: "asc" },
+            }),
+            this.prismaService.faqCategory.count(),
+        ]);
+
+        return { data, meta: { total, page, limit, pages: Math.ceil(total / limit) } };
     }
 
     async createFaqCategory(dto: CreateFaqCategoryDto) {
@@ -27,11 +38,21 @@ export class ContentService {
 
     // ─── FAQ ─────────────────────────────────────────────────────────────────────
 
-    async getFaqs() {
-        return this.prismaService.faq.findMany({
-            include: { category: true },
-            orderBy: { createdAt: "asc" },
-        });
+    async getFaqs(query: PaginationDto = { page: 1, limit: 10 }) {
+        const { page = 1, limit = 10 } = query ?? {};
+        const skip = (page - 1) * limit;
+
+        const [data, total] = await Promise.all([
+            this.prismaService.faq.findMany({
+                skip,
+                take: limit,
+                include: { category: true },
+                orderBy: { createdAt: "asc" },
+            }),
+            this.prismaService.faq.count(),
+        ]);
+
+        return { data, meta: { total, page, limit, pages: Math.ceil(total / limit) } };
     }
 
     async createFaq(dto: CreateFaqDto) {

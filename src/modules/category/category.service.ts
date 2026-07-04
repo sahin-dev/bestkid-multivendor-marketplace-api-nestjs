@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
+import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateCategoryDto } from "./dtos/create-category.dto";
 import { UpdateCategoryDto } from "./dtos/update-category.dto";
@@ -15,12 +16,31 @@ export class CategoryService {
         });
     }
 
-    async findAllCategories() {
-        return this.prismaService.category.findMany({
-            include: {
-                subCategories: true,
+    async findAllCategories(query: PaginationDto = { page: 1, limit: 10 }) {
+        const { page = 1, limit = 10 } = query ?? {};
+        const skip = (page - 1) * limit;
+
+        const [data, total] = await Promise.all([
+            this.prismaService.category.findMany({
+                skip,
+                take: limit,
+                include: {
+                    subCategories: true,
+                },
+                orderBy: { createdAt: "asc" },
+            }),
+            this.prismaService.category.count(),
+        ]);
+
+        return {
+            data,
+            meta: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit),
             },
-        });
+        };
     }
 
     async findCategoryById(id: number) {

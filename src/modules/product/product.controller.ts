@@ -8,6 +8,7 @@ import { CreateVariantDto } from "./dtos/create-variant.dto";
 import { CreateReviewDto } from "./dtos/create-review.dto";
 import { ProductQueryDto } from "./dtos/product-query.dto";
 import { UpdateProductAuthStatusDto } from "./dtos/update-product-auth-status.dto";
+import { PaginationDto } from "src/common/dtos/pagination.dto";
 
 @ApiTags("Products")
 @Controller("products")
@@ -94,8 +95,10 @@ export class ProductController {
     @Get(":id/reviews")
     @Public()
     @ApiParam({ name: "id", type: Number })
-    async findReviews(@Param("id", ParseIntPipe) productId: number) {
-        return this.productService.findReviews(productId);
+    @ApiQuery({ name: "page", required: false, type: Number })
+    @ApiQuery({ name: "limit", required: false, type: Number })
+    async findReviews(@Param("id", ParseIntPipe) productId: number, @Query() query: PaginationDto) {
+        return this.productService.findReviews(productId, query);
     }
 
     @Get("admin/all")

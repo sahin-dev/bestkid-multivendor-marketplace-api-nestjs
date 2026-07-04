@@ -12,6 +12,7 @@ import { ResendOtpDto } from "./dtos/ResendOtp.dto";
 import { ForgotPasswordDto } from "./dtos/ForgotPasswordDto";
 import { VerifyResetOtpDto } from "./dtos/VerifyResetOtpDto";
 import { ResetPasswordDto } from "./dtos/ResetPasswordDto";
+import { UserResponseDto } from "./dtos/UserResponseDto";
 
 @ApiTags("Auth")
 @Controller("auth")
@@ -68,6 +69,15 @@ export class AuthController {
         return this.authService.forgotPassword(dto)
     }
 
+    @Post("forgot-password/resend")
+    @Public()
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: "Resend password reset OTP to email" })
+    @ApiBody({ type: ForgotPasswordDto })
+    async resendForgotPasswordOtp(@Body() dto: ForgotPasswordDto) {
+        return this.authService.resendForgotPasswordOtp(dto)
+    }
+
     @Post("verify-reset-otp")
     @Public()
     @HttpCode(HttpStatus.OK)
@@ -93,6 +103,9 @@ export class AuthController {
     @ApiOperation({ summary: "Get currently authenticated user" })
     async getAuthenticatedUser(@Req() request: Request) {
         const user = request["user"] as User
-        return await this.authService.getAuthenticatedUser(user.id)
+        const uerProfile = await this.authService.getAuthenticatedUser(user.id)
+        return plainToInstance(UserResponseDto, uerProfile, {
+            excludeExtraneousValues: true
+        })
     }
 }

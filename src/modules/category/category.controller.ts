@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post } from "@nestjs/common";
-import { ApiBearerAuth, ApiBody, ApiParam, ApiTags } from "@nestjs/swagger";
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
+import { ApiBearerAuth, ApiBody, ApiParam, ApiQuery, ApiTags } from "@nestjs/swagger";
 import { Public, Roles } from "src/common/decorators";
+import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { CategoryService } from "./category.service";
 import { CreateCategoryDto } from "./dtos/create-category.dto";
 import { UpdateCategoryDto } from "./dtos/update-category.dto";
@@ -22,8 +23,10 @@ export class CategoryController {
 
     @Get()
     @Public()
-    async findAllCategories() {
-        return this.categoryService.findAllCategories();
+    @ApiQuery({ name: "page", required: false, type: Number })
+    @ApiQuery({ name: "limit", required: false, type: Number })
+    async findAllCategories(@Query() query: PaginationDto) {
+        return this.categoryService.findAllCategories(query);
     }
 
     @Get(":id")

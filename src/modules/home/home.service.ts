@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { PrismaService } from "../prisma/prisma.service";
 
 @Injectable()
@@ -56,27 +57,38 @@ export class HomeService {
         return { categories, trending, new_arrivals: newArrivals };
     }
 
-    async getRecentlyViewedForUser(userId: number) {
-        const records = await this.prismaService.recentlyView.findMany({
-            where: { userId },
-            orderBy: { viewedAt: "desc" },
-            take: 10,
-            include: {
-                product: {
-                    select: {
-                        id: true,
-                        name: true,
-                        original_price: true,
-                        discounted_price: true,
-                        discount_percentage: true,
-                        image_urls: true,
-                        average_rating: true,
-                        status: true,
-                        category: { select: { id: true, name: true } },
+    async getRecentlyViewedForUser(userId: number, query: PaginationDto = { page: 1, limit: 10 }) {
+        const { page = 1, limit = 10 } = query ?? {};
+        const skip = (page - 1) * limit;
+
+        const [records, total] = await Promise.all([
+            this.prismaService.recentlyView.findMany({
+                where: { userId },
+                orderBy: { viewedAt: "desc" },
+                skip,
+                take: limit,
+                include: {
+                    product: {
+                        select: {
+                            id: true,
+                            name: true,
+                            original_price: true,
+                            discounted_price: true,
+                            discount_percentage: true,
+                            image_urls: true,
+                            average_rating: true,
+                            status: true,
+                            category: { select: { id: true, name: true } },
+                        },
                     },
                 },
-            },
-        });
-        return { data: records.map((r) => ({ ...r.product, viewed_at: r.viewedAt })) };
+            }),
+            this.prismaService.recentlyView.count({ where: { userId } }),
+        ]);
+
+        return {
+            data: records.map((r) => ({ ...r.product, viewed_at: r.viewedAt })),
+            meta: { total, page, limit, pages: Math.ceil(total / limit) },
+        };
     }
 }

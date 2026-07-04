@@ -9,9 +9,20 @@ import { ResponseTransformerInterceptor } from './common/interceptors/responseTr
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
-  app.useStaticAssets(join(__dirname, "..", "public"))
-  app.setBaseViewsDir(join(__dirname,"..", "views"))
-  app.setViewEngine("hbs")
+  app.enableCors({
+    origin: '*', // Allow all origins
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE', // Allow all methods
+    allowedHeaders: 'Content-Type, Accept, Authorization', // Allow common headers
+  });
+
+  const uploadsDir = join(process.cwd(), 'uploads');
+  app.useStaticAssets(uploadsDir, {
+    prefix: '/uploads/',
+    index: false,
+    redirect: false,
+  });
+  app.setBaseViewsDir(join(__dirname, "..", "views"));
+  app.setViewEngine("hbs");
 
   app.useGlobalPipes(new ValidationPipe({
     transform:true,

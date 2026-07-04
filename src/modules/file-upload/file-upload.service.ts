@@ -33,8 +33,8 @@ export class FileUploadService {
       throw new BadRequestException('Failed to save file.');
     }
 
-    // Return the relative path from project root
-    return { filePath: `uploads/${uniqueName}` };
+    // Return the public path that matches the static uploads prefix
+    return { filePath: `/uploads/${uniqueName}` };
   }
 
   async deleteFile(filePath: string): Promise<{ message: string }> {

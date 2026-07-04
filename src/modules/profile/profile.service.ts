@@ -23,6 +23,8 @@ export class ProfileService {
             throw new NotFoundException("User not found!");
         }
 
+        console.log(user)
+
         return user;
     }
 

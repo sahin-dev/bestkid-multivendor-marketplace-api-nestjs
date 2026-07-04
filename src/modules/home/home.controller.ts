@@ -1,5 +1,6 @@
-import { Controller, Get, Req } from "@nestjs/common";
-import { ApiOperation, ApiTags } from "@nestjs/swagger";
+import { Controller, Get, Query, Req } from "@nestjs/common";
+import { ApiOperation, ApiQuery, ApiTags } from "@nestjs/swagger";
+import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { Public } from "src/common/decorators";
 import { HomeService } from "./home.service";
 import type { Request } from "express";
@@ -18,11 +19,13 @@ export class HomeController {
 
     @Get("recently-viewed")
     @ApiOperation({ summary: "Get recently viewed products for logged-in user" })
-    async getRecentlyViewed(@Req() req: Request) {
+    @ApiQuery({ name: "page", required: false, type: Number })
+    @ApiQuery({ name: "limit", required: false, type: Number })
+    async getRecentlyViewed(@Req() req: Request, @Query() query: PaginationDto) {
         const user = req["user"] as { id: number } | undefined;
         if (!user?.id) {
             return { data: [], message: "Login to see your recently viewed products." };
         }
-        return this.homeService.getRecentlyViewedForUser(user.id);
+        return this.homeService.getRecentlyViewedForUser(user.id, query);
     }
 }

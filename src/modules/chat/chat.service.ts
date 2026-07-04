@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { SendMessageDto } from "./dtos/send-message.dto";
 import { MessagesQueryDto } from "./dtos/messages-query.dto";
@@ -39,40 +40,55 @@ export class ChatService {
         });
     }
 
-    async getUserRooms(userId: number) {
-        const rooms = await this.prismaService.chatRoom.findMany({
-            where: {
-                OR: [
-                    { buyerId: userId },
-                    { sellerId: userId },
-                ],
-            },
-            include: {
-                buyer: {
-                    select: {
-                        id: true,
-                        email: true,
-                        profile: { select: { full_name: true, avatar_url: true } },
-                    },
-                },
-                seller: {
-                    select: {
-                        id: true,
-                        email: true,
-                        profile: { select: { full_name: true, avatar_url: true } },
-                    },
-                },
-                messages: {
-                    orderBy: { createdAt: "desc" },
-                    take: 1,
-                },
-            },
-            orderBy: {
-                updatedAt: "desc",
-            },
-        });
+    async getUserRooms(userId: number, query: PaginationDto = { page: 1, limit: 10 }) {
+        const { page = 1, limit = 10 } = query ?? {};
+        const skip = (page - 1) * limit;
 
-        return rooms.map((room) => {
+        const [rooms, total] = await Promise.all([
+            this.prismaService.chatRoom.findMany({
+                where: {
+                    OR: [
+                        { buyerId: userId },
+                        { sellerId: userId },
+                    ],
+                },
+                skip,
+                take: limit,
+                include: {
+                    buyer: {
+                        select: {
+                            id: true,
+                            email: true,
+                            profile: { select: { full_name: true, avatar_url: true } },
+                        },
+                    },
+                    seller: {
+                        select: {
+                            id: true,
+                            email: true,
+                            profile: { select: { full_name: true, avatar_url: true } },
+                        },
+                    },
+                    messages: {
+                        orderBy: { createdAt: "desc" },
+                        take: 1,
+                    },
+                },
+                orderBy: {
+                    updatedAt: "desc",
+                },
+            }),
+            this.prismaService.chatRoom.count({
+                where: {
+                    OR: [
+                        { buyerId: userId },
+                        { sellerId: userId },
+                    ],
+                },
+            }),
+        ]);
+
+        const data = rooms.map((room) => {
             const partner = room.buyerId === userId ? room.seller : room.buyer;
             const lastMessage = room.messages[0] || null;
             return {
@@ -83,6 +99,8 @@ export class ChatService {
                 updatedAt: room.updatedAt,
             };
         });
+
+        return { data, meta: { total, page, limit, pages: Math.ceil(total / limit) } };
     }
 
     async getRoomMessages(roomId: number, userId: number, query: MessagesQueryDto) {

@@ -86,29 +86,11 @@ export class AuthService {
     // ─── Forgot Password Flow ────────────────────────────────────────────────────
 
     async forgotPassword(dto: ForgotPasswordDto) {
-        const user = await this.userService.getUserByEmail(dto.email)
-        // For security, silently succeed even if email not found
-        if (!user) {
-            return { message: "If that email is registered, an OTP has been sent." }
-        }
+        return this.sendResetPasswordOtp(dto.email)
+    }
 
-        const createdOtp = await this.otpService.create(
-            user.id,
-            OtpPurpose.RESET_PASSWORD,
-            new Date(Date.now() + 15 * 60 * 1000),
-        )
-
-        try {
-            this.smtpProvider.sendMail(
-                user.email,
-                "BestKid — Password Reset OTP",
-                otpEmailTemplate({ appname: "BestKid", name: user.profile?.full_name ?? user.email, otp: createdOtp.otp }),
-            )
-        } catch (err) {
-            this.logger.error(err)
-        }
-
-        return { message: "If that email is registered, an OTP has been sent.", requestId: createdOtp.requestId }
+    async resendForgotPasswordOtp(dto: ForgotPasswordDto) {
+        return this.sendResetPasswordOtp(dto.email)
     }
 
     async verifyResetOtp(dto: VerifyResetOtpDto) {
@@ -139,5 +121,31 @@ export class AuthService {
 
     private async sendEmailVerificationEmail(username: string, email: string, otp: string) {
         this.smtpProvider.sendMail(email, "Email Verification", otpEmailTemplate({ appname: "BestKid", name: username, otp }))
+    }
+
+    private async sendResetPasswordOtp(email: string) {
+        const user = await this.userService.getUserByEmail(email)
+        // For security, silently succeed even if email not found
+        if (!user) {
+            return { message: "If that email is registered, an OTP has been sent." }
+        }
+
+        const createdOtp = await this.otpService.create(
+            user.id,
+            OtpPurpose.RESET_PASSWORD,
+            new Date(Date.now() + 15 * 60 * 1000),
+        )
+
+        try {
+            this.smtpProvider.sendMail(
+                user.email,
+                "BestKid — Password Reset OTP",
+                otpEmailTemplate({ appname: "BestKid", name: user.profile?.full_name ?? user.email, otp: createdOtp.otp }),
+            )
+        } catch (err) {
+            this.logger.error(err)
+        }
+
+        return { message: "If that email is registered, an OTP has been sent.", requestId: createdOtp.requestId }
     }
 }

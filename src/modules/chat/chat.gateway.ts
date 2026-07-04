@@ -62,8 +62,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         if (!user) return;
 
         // Verify if room belongs to user
-        const rooms = await this.chatService.getUserRooms(user.id);
-        const hasRoom = rooms.some((r) => r.id === data.chatRoomId);
+        const roomsResponse = await this.chatService.getUserRooms(user.id, { page: 1, limit: 1000 });
+        const hasRoom = roomsResponse.data.some((r: any) => r.id === data.chatRoomId);
         if (!hasRoom) {
             socket.emit("error", "You do not have access to this room");
             return;
