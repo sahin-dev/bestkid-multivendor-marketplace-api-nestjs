@@ -1,0 +1,37 @@
+model Coupon {
+  id              Int                @id @default(autoincrement())
+  campaign_reason String
+  code            String             @unique
+  categoryId      Int?
+  subCategoryId   Int?
+  discount_type   CouponDiscountType
+  discount_value  Float
+  usage_type      CouponUsageType    @default(UNLIMITED)
+  usage_limit     Int?
+  used_count      Int                @default(0)
+  start_date      DateTime
+  end_date        DateTime
+  is_active       Boolean            @default(true)
+
+  category    Category?    @relation(fields: [categoryId], references: [id])
+  subCategory SubCategory? @relation(fields: [subCategoryId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([code])
+  @@index([categoryId])
+  @@index([subCategoryId])
+  @@index([is_active])
+  @@map("coupons")
+}
+
+enum CouponDiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+enum CouponUsageType {
+  UNLIMITED
+  LIMITED
+}

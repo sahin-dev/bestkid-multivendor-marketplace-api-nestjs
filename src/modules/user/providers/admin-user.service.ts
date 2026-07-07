@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
-import { UserRole } from "generated/prisma/client";
+import { OrderStatus, SellerTier, UserRole } from "generated/prisma/client";
 
 @Injectable()
 export class AdminUserService {
@@ -113,31 +113,83 @@ export class AdminUserService {
     }
 
     async findUserDetail(id: number) {
-        const user = await this.prismaService.baseUser.findUnique({
-            where: { id },
-            include: {
-                profile: true,
-                buyer_orders: {
-                    take: 10,
-                    orderBy: { createdAt: "desc" },
+        const [user, buyingStats, sellingStats, listedProducts] = await Promise.all([
+            this.prismaService.baseUser.findUnique({
+                where: { id },
+                include: {
+                    profile: true,
                 },
-                seller_orders: {
-                    take: 10,
-                    orderBy: { createdAt: "desc" },
-                },
-                products: {
-                    take: 10,
-                    orderBy: { createdAt: "desc" },
-                },
-            },
-            omit: { password: true },
-        });
+                omit: { password: true },
+            }),
+            this.getBuyingStats(id),
+            this.getSellingStats(id),
+            this.prismaService.product.count({ where: { userId: id } }),
+        ]);
 
         if (!user) {
             throw new NotFoundException(`User with ID ${id} not found`);
         }
 
-        return user;
+        return {
+            ...user,
+            statistics: {
+                buying: buyingStats,
+                selling: {
+                    ...sellingStats,
+                    listedProducts,
+                },
+            },
+        };
+    }
+
+    async findUserProducts(id: number, page = 1, limit = 10) {
+        const user = await this.prismaService.baseUser.findUnique({ where: { id }, select: { id: true } });
+        if (!user) {
+            throw new NotFoundException(`User with ID ${id} not found`);
+        }
+
+        const skip = (page - 1) * limit;
+        const [data, total] = await Promise.all([
+            this.prismaService.product.findMany({
+                where: { userId: id },
+                skip,
+                take: limit,
+                orderBy: { createdAt: "desc" },
+                include: {
+                    category: true,
+                    subCategory: true,
+                    variants: true,
+                },
+            }),
+            this.prismaService.product.count({ where: { userId: id } }),
+        ]);
+
+        return {
+            data,
+            meta: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit),
+            },
+        };
+    }
+
+    async updateSellerTier(id: number, sellerTier: SellerTier) {
+        const user = await this.prismaService.baseUser.findUnique({ where: { id } });
+        if (!user) {
+            throw new NotFoundException(`User with ID ${id} not found`);
+        }
+        if (user.role === "ADMIN") {
+            throw new BadRequestException("Admin users cannot be assigned a seller tier");
+        }
+
+        return this.prismaService.baseUser.update({
+            where: { id },
+            data: { seller_tier: sellerTier },
+            omit: { password: true },
+            include: { profile: true },
+        });
     }
 
     async deleteUser(id: number) {
@@ -180,5 +232,54 @@ export class AdminUserService {
 
             return deletedUser;
         });
+    }
+
+    private async getBuyingStats(userId: number) {
+        const [totalOrders, activeOrders, totalReturns, totalCanceled] = await Promise.all([
+            this.prismaService.order.count({ where: { userId } }),
+            this.prismaService.order.count({
+                where: {
+                    userId,
+                    status: { in: [OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.PROCESSING, OrderStatus.SHIPPED] },
+                },
+            }),
+            this.prismaService.returnRequest.count({ where: { userId } }),
+            this.prismaService.order.count({ where: { userId, status: OrderStatus.CANCELLED } }),
+        ]);
+
+        return {
+            totalOrders,
+            activeOrders,
+            totalReturns,
+            totalCanceled,
+        };
+    }
+
+    private async getSellingStats(sellerId: number) {
+        const [totalOrders, totalEarnings, totalReturns, totalCanceled] = await Promise.all([
+            this.prismaService.order.count({ where: { sellerId } }),
+            this.prismaService.order.aggregate({
+                where: {
+                    sellerId,
+                    status: { notIn: [OrderStatus.CANCELLED, OrderStatus.REFUNDED] },
+                },
+                _sum: { total: true },
+            }),
+            this.prismaService.returnRequest.count({
+                where: {
+                    orderItem: {
+                        order: { sellerId },
+                    },
+                },
+            }),
+            this.prismaService.order.count({ where: { sellerId, status: OrderStatus.CANCELLED } }),
+        ]);
+
+        return {
+            totalOrders,
+            totalEarnings: totalEarnings._sum.total ?? 0,
+            totalReturns,
+            totalCanceled,
+        };
     }
 }

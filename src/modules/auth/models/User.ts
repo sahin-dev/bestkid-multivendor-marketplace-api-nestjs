@@ -1,4 +1,4 @@
-import { BaseUser, UserRole } from "generated/prisma/client";
+import { BaseUser, CurrencyPreference, LanguagePreference, SellerTier, UserRole } from "generated/prisma/client";
 import { UserResponseDto } from "../dtos/UserResponseDto";
 import { plainToInstance } from "class-transformer";
 
@@ -12,6 +12,9 @@ export class User implements BaseUser {
     role: UserRole;
     stripe_account_id: string | null;
     stripe_onboarding_complete: boolean;
+    language_preference: LanguagePreference;
+    currency_preference: CurrencyPreference;
+    seller_tier: SellerTier;
     createdAt: Date;
     updatedAt: Date;
 

@@ -74,6 +74,13 @@ export class UserService {
         });
     }
 
+    async getUserByIdIncludingPassword(userId: number) {
+        return this.prismaService.baseUser.findUnique({
+            where: { id: userId },
+            include: { profile: true },
+        });
+    }
+
     async findVerifiedResetOtp(requestId: string) {
         return this.prismaService.otpVerification.findUnique({
             where: { requestId, purpose: "RESET_PASSWORD", verified: true },

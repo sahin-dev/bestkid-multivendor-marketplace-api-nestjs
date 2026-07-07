@@ -9,6 +9,7 @@ import { UpsertCompanyInfoDto } from "./dtos/upsert-company-info.dto";
 import { CreateContactRequestDto } from "./dtos/create-contact-request.dto";
 import { ReplyContactRequestDto } from "./dtos/reply-contact-request.dto";
 import { LegalDocumentType, ContactStatus } from "generated/prisma/client";
+import { ContactRequestQueryDto, toContactStatus } from "./dtos/contact-request-query.dto";
 
 @Injectable()
 export class ContentService {
@@ -132,20 +133,34 @@ export class ContentService {
     // ─── Contact Requests ─────────────────────────────────────────────────────────
 
     async submitContactRequest(dto: CreateContactRequestDto) {
-        return this.prismaService.contactRequest.create({ data: { ...dto } });
+        return this.prismaService.contactRequest.create({ data: { ...dto, status: ContactStatus.TO_DO } });
     }
 
-    async findAllContactRequests(page = 1, limit = 10) {
+    async findAllContactRequests(query: ContactRequestQueryDto = { page: 1, limit: 10 }) {
+        const { page = 1, limit = 10, status } = query ?? {};
         const skip = (page - 1) * limit;
+        const mappedStatus = toContactStatus(status);
+        const where = mappedStatus ? { status: mappedStatus } : {};
+
         const [data, total] = await Promise.all([
             this.prismaService.contactRequest.findMany({
+                where,
                 skip,
                 take: limit,
                 orderBy: { createdAt: "desc" },
             }),
-            this.prismaService.contactRequest.count(),
+            this.prismaService.contactRequest.count({ where }),
         ]);
-        return { data, meta: { total, page, limit, pages: Math.ceil(total / limit) } };
+        return { data: data.map((request) => this.formatContactRequest(request)), meta: { total, page, limit, pages: Math.ceil(total / limit) } };
+    }
+
+    async findContactRequestById(id: number) {
+        const request = await this.prismaService.contactRequest.findUnique({ where: { id } });
+        if (!request) {
+            throw new NotFoundException(`Contact request with ID ${id} not found`);
+        }
+
+        return this.formatContactRequest(request);
     }
 
     async replyToContactRequest(id: number, dto: ReplyContactRequestDto) {
@@ -153,9 +168,32 @@ export class ContentService {
         if (!request) {
             throw new NotFoundException(`Contact request with ID ${id} not found`);
         }
-        return this.prismaService.contactRequest.update({
+        const updated = await this.prismaService.contactRequest.update({
             where: { id },
-            data: { reply: dto.reply, status: ContactStatus.REPLIED },
+            data: { reply: dto.reply, status: ContactStatus.RESOLVED },
         });
+
+        return this.formatContactRequest(updated);
+    }
+
+    async resolveContactRequest(id: number) {
+        const request = await this.prismaService.contactRequest.findUnique({ where: { id } });
+        if (!request) {
+            throw new NotFoundException(`Contact request with ID ${id} not found`);
+        }
+
+        const updated = await this.prismaService.contactRequest.update({
+            where: { id },
+            data: { status: ContactStatus.RESOLVED },
+        });
+
+        return this.formatContactRequest(updated);
+    }
+
+    private formatContactRequest<T extends { status: ContactStatus }>(request: T) {
+        return {
+            ...request,
+            status_label: request.status === ContactStatus.RESOLVED ? "Resolved" : "To Do",
+        };
     }
 }

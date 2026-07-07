@@ -11,6 +11,9 @@ model BaseUser {
   // Stripe seller onboarding
   stripe_account_id          String?
   stripe_onboarding_complete Boolean @default(false)
+  language_preference        LanguagePreference @default(EN)
+  currency_preference        CurrencyPreference @default(USD)
+  seller_tier                SellerTier @default(BASIC_SELLER)
 
   products        Product[]
   buyer_chat      ChatRoom[] @relation("BuyerChatRoom")
@@ -23,6 +26,7 @@ model BaseUser {
   seller_orders   Order[]    @relation("SellerOrders")
   return_requests ReturnRequest[]
   delivery_option SellerDeliveryOption?
+  addresses       UserAddress[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -73,5 +77,22 @@ enum OtpPurpose {
 enum UserRole {
   USER
   ADMIN
-  SELLER
+}
+
+enum SellerTier {
+  BASIC_SELLER
+  STANDARD_SELLER
+  PREMIUM_SELLER
+}
+
+enum LanguagePreference {
+  EN
+  BG
+}
+
+enum CurrencyPreference {
+  USD
+  EUR
+  AED
+  GBP
 }

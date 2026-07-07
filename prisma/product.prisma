@@ -20,6 +20,8 @@ model Product {
   recently_viewed     RecentlyView[]
   is_authenticated    Boolean              @default(false)
   authentication_status AuthenticationStatus @default(PENDING)
+  approved_at         DateTime?
+  rejected_at         DateTime?
   variants            ProductVariant[]
   subCategory         SubCategory     @relation(fields: [subCategoryId], references: [id])
   category            Category        @relation(fields: [categoryId], references: [id])

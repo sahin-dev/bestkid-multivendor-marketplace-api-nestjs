@@ -130,19 +130,20 @@ export class StripeService {
         const skip = (page - 1) * limit;
         const [data, total] = await Promise.all([
             this.prismaService.baseUser.findMany({
-                where: { role: "SELLER" },
+                where: { stripe_account_id: { not: null } },
                 skip,
                 take: limit,
                 select: {
                     id: true,
                     email: true,
+                    seller_tier: true,
                     stripe_account_id: true,
                     stripe_onboarding_complete: true,
                     profile: { select: { full_name: true } },
                 },
                 orderBy: { createdAt: "desc" },
             }),
-            this.prismaService.baseUser.count({ where: { role: "SELLER" } }),
+            this.prismaService.baseUser.count({ where: { stripe_account_id: { not: null } } }),
         ]);
         return { data, meta: { total, page, limit, pages: Math.ceil(total / limit) } };
     }

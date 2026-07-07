@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
-import { ApiBearerAuth, ApiBody, ApiParam, ApiQuery, ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiTags } from "@nestjs/swagger";
 import { Public, Roles } from "src/common/decorators";
 import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { CategoryService } from "./category.service";
@@ -11,11 +11,12 @@ import { UpdateSubCategoryDto } from "./dtos/update-subcategory.dto";
 @ApiTags("Categories")
 @Controller("categories")
 export class CategoryController {
-    constructor(private readonly categoryService: CategoryService) {}
+    constructor(private readonly categoryService: CategoryService) { }
 
     @Post()
     @ApiBearerAuth("access-token")
     @Roles("ADMIN")
+    @ApiOperation({ summary: "Admin: create a category" })
     @ApiBody({ type: CreateCategoryDto })
     async createCategory(@Body() dto: CreateCategoryDto) {
         return this.categoryService.createCategory(dto);
@@ -23,6 +24,7 @@ export class CategoryController {
 
     @Get()
     @Public()
+    @ApiOperation({ summary: "List categories with subcategories" })
     @ApiQuery({ name: "page", required: false, type: Number })
     @ApiQuery({ name: "limit", required: false, type: Number })
     async findAllCategories(@Query() query: PaginationDto) {
@@ -31,6 +33,8 @@ export class CategoryController {
 
     @Get(":id")
     @Public()
+    @ApiOperation({ summary: "Get category details with subcategories" })
+    @ApiParam({ name: "id", type: Number })
     async findCategoryById(@Param("id", ParseIntPipe) id: number) {
         return this.categoryService.findCategoryById(id);
     }
@@ -38,6 +42,7 @@ export class CategoryController {
     @Patch(":id")
     @ApiBearerAuth("access-token")
     @Roles("ADMIN")
+    @ApiOperation({ summary: "Admin: update a category" })
     @ApiParam({ name: "id", type: Number })
     @ApiBody({ type: UpdateCategoryDto })
     async updateCategory(@Param("id", ParseIntPipe) id: number, @Body() dto: UpdateCategoryDto) {
@@ -47,6 +52,7 @@ export class CategoryController {
     @Delete(":id")
     @ApiBearerAuth("access-token")
     @Roles("ADMIN")
+    @ApiOperation({ summary: "Admin: delete a category" })
     @ApiParam({ name: "id", type: Number })
     async deleteCategory(@Param("id", ParseIntPipe) id: number) {
         return this.categoryService.deleteCategory(id);
@@ -55,6 +61,7 @@ export class CategoryController {
     @Post(":id/subcategories")
     @ApiBearerAuth("access-token")
     @Roles("ADMIN")
+    @ApiOperation({ summary: "Admin: create a sub-category under a category" })
     @ApiParam({ name: "id", type: Number })
     @ApiBody({ type: CreateSubCategoryDto })
     async createSubCategory(@Param("id", ParseIntPipe) categoryId: number, @Body() dto: CreateSubCategoryDto) {
@@ -64,6 +71,7 @@ export class CategoryController {
     @Patch(":catId/subcategories/:subId")
     @ApiBearerAuth("access-token")
     @Roles("ADMIN")
+    @ApiOperation({ summary: "Admin: update a sub-category" })
     @ApiParam({ name: "catId", type: Number })
     @ApiParam({ name: "subId", type: Number })
     @ApiBody({ type: UpdateSubCategoryDto })
@@ -78,6 +86,7 @@ export class CategoryController {
     @Delete(":catId/subcategories/:subId")
     @ApiBearerAuth("access-token")
     @Roles("ADMIN")
+    @ApiOperation({ summary: "Admin: delete a sub-category" })
     @ApiParam({ name: "catId", type: Number })
     @ApiParam({ name: "subId", type: Number })
     async deleteSubCategory(

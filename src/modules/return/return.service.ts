@@ -120,16 +120,12 @@ export class ReturnService {
             throw new NotFoundException(`Return request with ID ${returnId} not found`);
         }
 
-        // Permissions check
         if (role !== "ADMIN") {
-            if (role === "SELLER") {
-                if (request.orderItem.order.sellerId !== userId) {
-                    throw new ForbiddenException("You do not have permission to view this return request");
-                }
-            } else {
-                if (request.userId !== userId) {
-                    throw new ForbiddenException("You do not have permission to view this return request");
-                }
+            const isBuyer = request.userId === userId;
+            const isSeller = request.orderItem.order.sellerId === userId;
+
+            if (!isBuyer && !isSeller) {
+                throw new ForbiddenException("You do not have permission to view this return request");
             }
         }
 

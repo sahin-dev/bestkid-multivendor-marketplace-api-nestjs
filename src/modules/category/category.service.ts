@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateCategoryDto } from "./dtos/create-category.dto";
@@ -69,8 +69,14 @@ export class CategoryService {
     async deleteCategory(id: number) {
         await this.findCategoryById(id);
 
-        // Delete all subcategories and products or let prisma handle constraints/delete them
-        // First delete subcategories of this category
+        const productCount = await this.prismaService.product.count({
+            where: { categoryId: id },
+        });
+
+        if (productCount > 0) {
+            throw new BadRequestException("Category cannot be deleted while products are assigned to it");
+        }
+
         await this.prismaService.subCategory.deleteMany({
             where: { categoryId: id },
         });
@@ -112,6 +118,14 @@ export class CategoryService {
         });
         if (!subCategory) {
             throw new NotFoundException(`SubCategory with ID ${subCategoryId} not found in Category ${categoryId}`);
+        }
+
+        const productCount = await this.prismaService.product.count({
+            where: { subCategoryId },
+        });
+
+        if (productCount > 0) {
+            throw new BadRequestException("Sub-category cannot be deleted while products are assigned to it");
         }
 
         return this.prismaService.subCategory.delete({

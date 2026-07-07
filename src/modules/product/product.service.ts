@@ -7,6 +7,7 @@ import { CreateReviewDto } from "./dtos/create-review.dto";
 import { ProductQueryDto } from "./dtos/product-query.dto";
 import { AuthenticationStatus } from "generated/prisma/client";
 import { PaginationDto } from "src/common/dtos/pagination.dto";
+import { AdminProductApprovalFilter, AdminProductQueryDto } from "./dtos/admin-product-query.dto";
 
 @Injectable()
 export class ProductService {
@@ -324,8 +325,18 @@ export class ProductService {
         };
     }
 
-    async findAllProductsAdmin(query: any) {
-        const { page = 1, limit = 10, search, categoryId, subCategoryId, status, sellerId } = query;
+    async findAllProductsAdmin(query: AdminProductQueryDto) {
+        const {
+            page = 1,
+            limit = 10,
+            search,
+            categoryId,
+            subCategoryId,
+            status,
+            sellerId,
+            authenticationStatus,
+            approval,
+        } = query;
         const skip = (page - 1) * limit;
 
         const whereClause: any = {};
@@ -351,6 +362,20 @@ export class ProductService {
 
         if (sellerId) {
             whereClause.userId = sellerId;
+        }
+
+        if (authenticationStatus) {
+            whereClause.authentication_status = authenticationStatus;
+        }
+
+        if (approval && approval !== AdminProductApprovalFilter.ALL) {
+            const approvalMap: Record<Exclude<AdminProductApprovalFilter, AdminProductApprovalFilter.ALL>, AuthenticationStatus> = {
+                [AdminProductApprovalFilter.APPROVED]: AuthenticationStatus.VERIFIED,
+                [AdminProductApprovalFilter.REJECTED]: AuthenticationStatus.NOT_VERIFIED,
+                [AdminProductApprovalFilter.PENDING]: AuthenticationStatus.PENDING,
+            };
+
+            whereClause.authentication_status = approvalMap[approval];
         }
 
         const [data, total] = await Promise.all([
@@ -392,12 +417,36 @@ export class ProductService {
         }
 
         const isAuthenticated = status === AuthenticationStatus.VERIFIED;
+        const now = new Date();
 
         return this.prismaService.product.update({
             where: { id },
             data: {
                 authentication_status: status,
                 is_authenticated: isAuthenticated,
+                approved_at:
+                    status === AuthenticationStatus.VERIFIED
+                        ? now
+                        : status === AuthenticationStatus.PENDING
+                          ? null
+                          : product.approved_at,
+                rejected_at:
+                    status === AuthenticationStatus.NOT_VERIFIED
+                        ? now
+                        : status === AuthenticationStatus.PENDING
+                          ? null
+                          : product.rejected_at,
+            },
+            include: {
+                category: true,
+                subCategory: true,
+                user: {
+                    select: {
+                        id: true,
+                        email: true,
+                        profile: { select: { full_name: true } },
+                    },
+                },
             },
         });
     }

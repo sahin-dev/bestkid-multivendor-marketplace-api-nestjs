@@ -1,12 +1,32 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { UpsertDeliveryDto } from "./dtos/upsert-delivery.dto";
+import {
+    UpsertDeliveryDto,
+    UpsertDomesticDeliveryDto,
+    UpsertInternationalDeliveryDto,
+} from "./dtos/upsert-delivery.dto";
 
 @Injectable()
 export class DeliveryService {
     constructor(private readonly prismaService: PrismaService) {}
 
     async upsertDeliveryOptions(sellerId: number, dto: UpsertDeliveryDto) {
+        return this.prismaService.sellerDeliveryOption.upsert({
+            where: { sellerId },
+            update: { ...dto },
+            create: { sellerId, ...dto },
+        });
+    }
+
+    async upsertDomesticDeliveryOptions(sellerId: number, dto: UpsertDomesticDeliveryDto) {
+        return this.prismaService.sellerDeliveryOption.upsert({
+            where: { sellerId },
+            update: { ...dto },
+            create: { sellerId, ...dto },
+        });
+    }
+
+    async upsertInternationalDeliveryOptions(sellerId: number, dto: UpsertInternationalDeliveryDto) {
         return this.prismaService.sellerDeliveryOption.upsert({
             where: { sellerId },
             update: { ...dto },

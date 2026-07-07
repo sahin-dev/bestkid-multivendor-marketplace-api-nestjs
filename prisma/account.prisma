@@ -1,0 +1,16 @@
+model UserAddress {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  user         BaseUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  address_name String
+  address      String
+  city         String?
+  postal_code  String?
+  country      String?
+  is_default   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+  @@map("user_addresses")
+}

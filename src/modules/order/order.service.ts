@@ -70,6 +70,13 @@ export class OrderService {
                 },
                 include: {
                     items: true,
+                    user: {
+                        select: {
+                            id: true,
+                            email: true,
+                            profile: { select: { full_name: true, avatar_url: true, phone: true } },
+                        },
+                    },
                 },
             });
 
@@ -224,6 +231,13 @@ export class OrderService {
                 take: limit,
                 include: {
                     items: true,
+                    user: {
+                        select: {
+                            id: true,
+                            email: true,
+                            profile: { select: { full_name: true, avatar_url: true, phone: true } },
+                        },
+                    },
                 },
                 orderBy: {
                     createdAt: "desc",
@@ -283,6 +297,13 @@ export class OrderService {
             where: { id: orderId },
             include: {
                 items: true,
+                user: {
+                    select: {
+                        id: true,
+                        email: true,
+                        profile: { select: { full_name: true, avatar_url: true, phone: true } },
+                    },
+                },
             },
         });
 
@@ -302,6 +323,13 @@ export class OrderService {
             where: { id: orderId },
             include: {
                 items: true,
+                user: {
+                    select: {
+                        id: true,
+                        email: true,
+                        profile: { select: { full_name: true, avatar_url: true, phone: true } },
+                    },
+                },
             },
         });
 

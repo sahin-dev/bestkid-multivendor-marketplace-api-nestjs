@@ -22,6 +22,10 @@ import { ReturnModule } from './modules/return/return.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { ContentModule } from './modules/content/content.module';
+import { AccountModule } from './modules/account/account.module';
+import { SellerModule } from './modules/seller/seller.module';
+import { AdminModule } from './modules/admin/admin.module';
+import { CouponModule } from './modules/coupon/coupon.module';
 
 @Module({
   imports: [
@@ -42,8 +46,12 @@ import { ContentModule } from './modules/content/content.module';
     ChatModule,
     NotificationModule,
     ContentModule,
+    AccountModule,
+    SellerModule,
+    AdminModule,
+    CouponModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
-export class AppModule {}
+export class AppModule {}

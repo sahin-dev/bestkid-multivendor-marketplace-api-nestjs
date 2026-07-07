@@ -1,15 +1,16 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { UpdateProfileDto } from "./dtos/updateProfile.dto";
 import { PrismaService } from "../prisma/prisma.service";
-import path from "path";
 import { UpdatePasswordDto } from "./dtos/UpdatePasswordDto";
 import { EncoderProvider } from "../auth/providers/encoder.provider";
+import { FileUploadService } from "../file-upload/file-upload.service";
 
 @Injectable()
 export class ProfileService {
     constructor(
         private readonly prismaService: PrismaService,
         private readonly encoder: EncoderProvider,
+        private readonly fileUploadService: FileUploadService,
     ) {}
 
     async getUserProfile(userId: number) {
@@ -23,9 +24,8 @@ export class ProfileService {
             throw new NotFoundException("User not found!");
         }
 
-        console.log(user)
 
-        return user;
+        return this.withProfileMetadata(user);
     }
 
     async updateProfile(userId: number, updateProfileDto: UpdateProfileDto, file?: Express.Multer.File) {
@@ -47,7 +47,8 @@ export class ProfileService {
             profileData.phone = updateProfileDto.phone;
         }
         if (file) {
-            profileData.avatar_url = path.join("uploads", file.originalname);
+            const uploaded = await this.fileUploadService.uploadFile(file);
+            profileData.avatar_url = uploaded.filePath;
         }
 
         if (user.profile_id) {
@@ -72,11 +73,13 @@ export class ProfileService {
             });
         }
 
-        return this.prismaService.baseUser.findUnique({
+        const updatedUser = await this.prismaService.baseUser.findUnique({
             where: { id: userId },
             omit: { password: true },
             include: { profile: true },
         });
+
+        return this.withProfileMetadata(updatedUser);
     }
 
     async updatePassword(userId: number, updatePasswordDto: UpdatePasswordDto) {
@@ -85,7 +88,11 @@ export class ProfileService {
         if (!user) {
             throw new NotFoundException("user not found!");
         }
-        if (updatePasswordDto.newpassword !== updatePasswordDto.confirmPassword) {
+        const newPassword = updatePasswordDto.newPassword ?? updatePasswordDto.newpassword;
+        if (!newPassword) {
+            throw new BadRequestException("New password is required!");
+        }
+        if (newPassword !== updatePasswordDto.confirmPassword) {
             throw new BadRequestException("Password does not matched!");
         }
 
@@ -94,7 +101,7 @@ export class ProfileService {
             throw new BadRequestException("Invalid current password");
         }
 
-        const hashedPassword = await this.encoder.hashPassword(updatePasswordDto.newpassword, 10);
+        const hashedPassword = await this.encoder.hashPassword(newPassword, 10);
 
         const updatedUser = await this.prismaService.baseUser.update({
             where: { id: userId },
@@ -103,6 +110,30 @@ export class ProfileService {
             include: { profile: true },
         });
 
-        return updatedUser;
+        return this.withProfileMetadata(updatedUser);
+    }
+
+    private withProfileMetadata<T extends { seller_tier?: string | null } | null>(user: T) {
+        if (!user) {
+            return user;
+        }
+
+        return {
+            ...user,
+            selling_tier: this.formatSellerTier(user.seller_tier),
+            email_update_restricted: true,
+            email_update_restricted_reason:
+                "Email updates are restricted because the email address is linked to authentication, security verification, and order records.",
+        };
+    }
+
+    private formatSellerTier(tier?: string | null) {
+        const labels = {
+            BASIC_SELLER: "Basic Seller",
+            STANDARD_SELLER: "Standard Seller",
+            PREMIUM_SELLER: "Premium Seller",
+        };
+
+        return tier ? (labels[tier] ?? tier) : null;
     }
 }

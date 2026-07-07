@@ -40,6 +40,15 @@ export class AuthController {
         return this.authService.login(signinDto)
     }
 
+    @Post("admin/login")
+    @Public()
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: "Admin login - returns JWT only for admin accounts or access_denied payload" })
+    @ApiBody({ type: SigninDto })
+    async adminLogin(@Body() signinDto: SigninDto) {
+        return this.authService.adminLogin(signinDto)
+    }
+
     @Post("verify-email")
     @HttpCode(HttpStatus.OK)
     @Public()
@@ -69,6 +78,15 @@ export class AuthController {
         return this.authService.forgotPassword(dto)
     }
 
+    @Post("admin/forgot-password")
+    @Public()
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: "Admin: send password reset OTP to email" })
+    @ApiBody({ type: ForgotPasswordDto })
+    async adminForgotPassword(@Body() dto: ForgotPasswordDto) {
+        return this.authService.adminForgotPassword(dto)
+    }
+
     @Post("forgot-password/resend")
     @Public()
     @HttpCode(HttpStatus.OK)
@@ -76,6 +94,15 @@ export class AuthController {
     @ApiBody({ type: ForgotPasswordDto })
     async resendForgotPasswordOtp(@Body() dto: ForgotPasswordDto) {
         return this.authService.resendForgotPasswordOtp(dto)
+    }
+
+    @Post("admin/forgot-password/resend")
+    @Public()
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: "Admin: resend password reset OTP to email" })
+    @ApiBody({ type: ForgotPasswordDto })
+    async adminResendForgotPasswordOtp(@Body() dto: ForgotPasswordDto) {
+        return this.authService.adminResendForgotPasswordOtp(dto)
     }
 
     @Post("verify-reset-otp")
@@ -87,6 +114,15 @@ export class AuthController {
         return this.authService.verifyResetOtp(dto)
     }
 
+    @Post("admin/verify-reset-otp")
+    @Public()
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: "Admin: verify the password reset OTP" })
+    @ApiBody({ type: VerifyResetOtpDto })
+    async adminVerifyResetOtp(@Body() dto: VerifyResetOtpDto) {
+        return this.authService.adminVerifyResetOtp(dto)
+    }
+
     @Post("reset-password")
     @Public()
     @HttpCode(HttpStatus.OK)
@@ -94,6 +130,15 @@ export class AuthController {
     @ApiBody({ type: ResetPasswordDto })
     async resetPassword(@Body() dto: ResetPasswordDto) {
         return this.authService.resetPassword(dto)
+    }
+
+    @Post("admin/reset-password")
+    @Public()
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: "Admin: reset password using verified OTP requestId" })
+    @ApiBody({ type: ResetPasswordDto })
+    async adminResetPassword(@Body() dto: ResetPasswordDto) {
+        return this.authService.adminResetPassword(dto)
     }
 
     // ─── Authenticated ───────────────────────────────────────────────────────────

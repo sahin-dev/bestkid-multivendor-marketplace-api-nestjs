@@ -46,6 +46,10 @@ export class AuthProvider {
 
     }
 
+    public signToken(payload: TokenPayload): string {
+        return this.jwtService.sign(payload)
+    }
+
     public async verifyToken(token: string): Promise<User> {
 
         const payload: TokenPayload = this.jwtService.verify(token)

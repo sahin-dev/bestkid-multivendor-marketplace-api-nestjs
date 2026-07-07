@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
-import { ApiBearerAuth, ApiBody, ApiParam, ApiQuery, ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { GetUser } from "src/common/decorators";
 import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { ChatService } from "./chat.service";
@@ -13,12 +13,15 @@ export class ChatController {
     constructor(private readonly chatService: ChatService) {}
 
     @Post("rooms")
+    @ApiOperation({ summary: "Find or create a chat room with a seller" })
     @ApiBody({ type: CreateRoomDto })
+    @ApiResponse({ status: 201, description: "Chat room returned" })
     async findOrCreateRoom(@GetUser("id") userId: number, @Body() dto: CreateRoomDto) {
         return this.chatService.findOrCreateRoom(userId, dto.sellerId);
     }
 
     @Get("rooms")
+    @ApiOperation({ summary: "List my chat rooms" })
     @ApiQuery({ name: "page", required: false, type: Number })
     @ApiQuery({ name: "limit", required: false, type: Number })
     async getUserRooms(@GetUser("id") userId: number, @Query() query: PaginationDto) {
@@ -26,6 +29,7 @@ export class ChatController {
     }
 
     @Get("rooms/:id/messages")
+    @ApiOperation({ summary: "List messages in a chat room" })
     @ApiParam({ name: "id", type: Number })
     @ApiQuery({ name: "page", required: false, type: Number })
     @ApiQuery({ name: "limit", required: false, type: Number })
@@ -38,6 +42,8 @@ export class ChatController {
     }
 
     @Patch("rooms/:id/read")
+    @ApiOperation({ summary: "Mark all messages in a chat room as read" })
+    @ApiParam({ name: "id", type: Number })
     async markMessagesRead(
         @Param("id", ParseIntPipe) roomId: number,
         @GetUser("id") userId: number,

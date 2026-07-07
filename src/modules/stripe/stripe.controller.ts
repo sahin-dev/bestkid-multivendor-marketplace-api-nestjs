@@ -11,7 +11,7 @@ import {
     Req,
 } from "@nestjs/common";
 import type { RawBodyRequest } from "@nestjs/common";
-import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiQuery, ApiTags } from "@nestjs/swagger";
 import { GetUser, Public, Roles } from "src/common/decorators";
 import { StripeService } from "./stripe.service";
 import { OnboardSellerDto } from "./dtos/onboard-seller.dto";
@@ -25,6 +25,7 @@ export class StripeController {
 
     @Post("onboard")
     @ApiOperation({ summary: "Create Stripe Express account and get onboarding URL" })
+    @ApiBody({ type: OnboardSellerDto })
     async onboard(@GetUser("id") userId: number, @Body() dto: OnboardSellerDto) {
         return this.stripeService.onboardSeller(userId, dto.returnUrl, dto.refreshUrl);
     }
@@ -36,7 +37,7 @@ export class StripeController {
     }
 
     @Get("callback")
-    @ApiOperation({ summary: "Stripe redirect callback after onboarding — updates onboarding status" })
+    @ApiOperation({ summary: "Stripe redirect callback after onboarding - updates onboarding status" })
     async callback(@GetUser("id") userId: number) {
         return this.stripeService.handleCallback(userId);
     }
@@ -44,7 +45,7 @@ export class StripeController {
     @Post("webhook")
     @Public()
     @HttpCode(HttpStatus.OK)
-    @ApiOperation({ summary: "Stripe webhook endpoint (raw body required)" })
+    @ApiOperation({ summary: "Stripe webhook endpoint", description: "Stripe calls this endpoint with a raw request body and stripe-signature header." })
     async webhook(
         @Req() req: RawBodyRequest<Request>,
         @Headers("stripe-signature") signature: string,
@@ -55,6 +56,8 @@ export class StripeController {
     @Get("admin/accounts")
     @Roles("ADMIN")
     @ApiOperation({ summary: "Admin: list all seller Stripe accounts" })
+    @ApiQuery({ name: "page", required: false, type: Number })
+    @ApiQuery({ name: "limit", required: false, type: Number })
     async adminListAccounts(
         @Query("page") page = 1,
         @Query("limit") limit = 20,

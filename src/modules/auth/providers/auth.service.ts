@@ -53,6 +53,43 @@ export class AuthService {
         return tokenOrUser
     }
 
+    async adminLogin(signinDto: SigninDto) {
+        const user = await this.userService.getUserByEmail(signinDto.email)
+
+        if (!user || user.role !== "ADMIN" || user.is_blocked) {
+            return this.getAdminAccessDeniedPayload()
+        }
+
+        const isPasswordValid = await this.encoder.compare(signinDto.password, user.password)
+        if (!isPasswordValid) {
+            return this.getAdminAccessDeniedPayload()
+        }
+
+        if (!user.email_verifird) {
+            return {
+                access_denied: true,
+                reason: "EMAIL_UNVERIFIED",
+                message: "Your admin email address is not verified.",
+            }
+        }
+
+        const token = this.authProvider.signToken({
+            id: user.id,
+            role: user.role,
+            email: user.email,
+        })
+
+        return {
+            access_token: token,
+            user: {
+                id: user.id,
+                email: user.email,
+                role: user.role,
+                profile: user.profile,
+            },
+        }
+    }
+
     async resendOtp(email: string) {
         const user = await this.userService.getUserByEmail(email)
         if (!user) {
@@ -89,8 +126,16 @@ export class AuthService {
         return this.sendResetPasswordOtp(dto.email)
     }
 
+    async adminForgotPassword(dto: ForgotPasswordDto) {
+        return this.sendAdminResetPasswordOtp(dto.email)
+    }
+
     async resendForgotPasswordOtp(dto: ForgotPasswordDto) {
         return this.sendResetPasswordOtp(dto.email)
+    }
+
+    async adminResendForgotPasswordOtp(dto: ForgotPasswordDto) {
+        return this.sendAdminResetPasswordOtp(dto.email)
     }
 
     async verifyResetOtp(dto: VerifyResetOtpDto) {
@@ -98,6 +143,17 @@ export class AuthService {
         // We need a "verify-only" approach: we verify but keep track via requestId
         const otp = await this.otpService.verifyOtp(dto.requestId, dto.otp)
         return { message: "OTP verified. You may now reset your password.", requestId: otp.requestId }
+    }
+
+    async adminVerifyResetOtp(dto: VerifyResetOtpDto) {
+        const otp = await this.otpService.verifyOtp(dto.requestId, dto.otp)
+        const user = otp.userId ? await this.userService.getUserByIdIncludingPassword(otp.userId) : null
+
+        if (!user || user.role !== "ADMIN" || user.is_blocked) {
+            throw new BadRequestException("Invalid admin reset request.")
+        }
+
+        return { message: "OTP verified. You may now reset your admin password.", requestId: otp.requestId }
     }
 
     async resetPassword(dto: ResetPasswordDto) {
@@ -115,6 +171,24 @@ export class AuthService {
         await this.userService.updatePassword(otp.userId, hashed)
 
         return { message: "Password has been reset successfully." }
+    }
+
+    async adminResetPassword(dto: ResetPasswordDto) {
+        if (dto.newPassword !== dto.confirmPassword) {
+            throw new BadRequestException("Passwords do not match!")
+        }
+
+        const otp = await this.userService.findVerifiedResetOtp(dto.requestId)
+        const user = otp?.userId ? await this.userService.getUserByIdIncludingPassword(otp.userId) : null
+
+        if (!otp || !otp.userId || !user || user.role !== "ADMIN" || user.is_blocked) {
+            throw new BadRequestException("Invalid or expired admin reset request.")
+        }
+
+        const hashed = await this.encoder.hashPassword(dto.newPassword, 10)
+        await this.userService.updatePassword(otp.userId, hashed)
+
+        return { message: "Admin password has been reset successfully." }
     }
 
     // ─── Private Helpers ─────────────────────────────────────────────────────────
@@ -147,5 +221,42 @@ export class AuthService {
         }
 
         return { message: "If that email is registered, an OTP has been sent.", requestId: createdOtp.requestId }
+    }
+
+    private async sendAdminResetPasswordOtp(email: string) {
+        const user = await this.userService.getUserByEmail(email)
+        if (!user || user.role !== "ADMIN" || user.is_blocked) {
+            return { message: "If that admin email is registered, a verification code has been sent." }
+        }
+
+        const createdOtp = await this.otpService.create(
+            user.id,
+            OtpPurpose.RESET_PASSWORD,
+            new Date(Date.now() + 15 * 60 * 1000),
+        )
+
+        try {
+            this.smtpProvider.sendMail(
+                user.email,
+                "BestKid Admin - Password Reset OTP",
+                otpEmailTemplate({ appname: "BestKid Admin", name: user.profile?.full_name ?? user.email, otp: createdOtp.otp }),
+            )
+        } catch (err) {
+            this.logger.error(err)
+        }
+
+        return {
+            message: "If that admin email is registered, a verification code has been sent.",
+            requestId: createdOtp.requestId,
+        }
+    }
+
+    private getAdminAccessDeniedPayload() {
+        return {
+            access_denied: true,
+            reason: "INVALID_OR_BLOCKED_ADMIN",
+            message:
+                "Unfortunately, your admin credentials are blocked or invalid. Please contact the developer team for assistance.",
+        }
     }
 }
