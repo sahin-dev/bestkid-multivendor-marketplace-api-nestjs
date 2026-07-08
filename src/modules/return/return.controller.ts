@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiResponse, 
 import { GetUser, Roles } from "src/common/decorators";
 import { ReturnService } from "./return.service";
 import { CreateReturnDto } from "./dtos/create-return.dto";
-import { ReturnQueryDto } from "./dtos/return-query.dto";
+import { ReturnQueryDto, ReturnTab, SellerReturnTab } from "./dtos/return-query.dto";
 import { UpdateReturnStatusDto } from "./dtos/update-return-status.dto";
 import { TokenPayload } from "../auth/types/TokenPayload.type";
 import { ReturnStatus } from "generated/prisma/client";
@@ -27,6 +27,7 @@ export class ReturnController {
     @ApiQuery({ name: "page", required: false, type: Number })
     @ApiQuery({ name: "limit", required: false, type: Number })
     @ApiQuery({ name: "status", required: false, enum: ReturnStatus })
+    @ApiQuery({ name: "tab", required: false, enum: ReturnTab })
     async findMyReturns(@GetUser("id") userId: number, @Query() query: ReturnQueryDto) {
         return this.returnService.findMyReturns(userId, query);
     }
@@ -37,6 +38,7 @@ export class ReturnController {
     @ApiQuery({ name: "page", required: false, type: Number })
     @ApiQuery({ name: "limit", required: false, type: Number })
     @ApiQuery({ name: "status", required: false, enum: ReturnStatus })
+    @ApiQuery({ name: "sellerTab", required: false, enum: SellerReturnTab })
     async findSellerReturns(@GetUser("id") sellerId: number, @Query() query: ReturnQueryDto) {
         return this.returnService.findSellerReturns(sellerId, query);
     }
@@ -49,6 +51,16 @@ export class ReturnController {
     @ApiQuery({ name: "status", required: false, enum: ReturnStatus })
     async findAllReturnsAdmin(@Query() query: ReturnQueryDto) {
         return this.returnService.findAllReturnsAdmin(query);
+    }
+
+    @Post(":id/chat")
+    @ApiOperation({ summary: "Find or create the seller conversation for a return request" })
+    @ApiParam({ name: "id", type: Number })
+    async findOrCreateReturnChat(
+        @Param("id", ParseIntPipe) returnId: number,
+        @GetUser("id") userId: number,
+    ) {
+        return this.returnService.findOrCreateReturnChat(returnId, userId);
     }
 
     @Get(":id")
@@ -71,7 +83,7 @@ export class ReturnController {
         @GetUser("id") sellerId: number,
         @Body() dto: UpdateReturnStatusDto,
     ) {
-        return this.returnService.updateReturnStatusSeller(returnId, sellerId, dto.status);
+        return this.returnService.updateReturnStatusSeller(returnId, sellerId, dto);
     }
 
     @Patch("admin/:id/status")
@@ -83,6 +95,6 @@ export class ReturnController {
         @Param("id", ParseIntPipe) returnId: number,
         @Body() dto: UpdateReturnStatusDto,
     ) {
-        return this.returnService.updateReturnStatusAdmin(returnId, dto.status);
+        return this.returnService.updateReturnStatusAdmin(returnId, dto);
     }
 }

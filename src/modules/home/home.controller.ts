@@ -13,8 +13,9 @@ export class HomeController {
     @Get()
     @Public()
     @ApiOperation({ summary: "Homepage data: categories, trending products, new arrivals" })
-    async getHomepage() {
-        return this.homeService.getHomepageData();
+    async getHomepage(@Req() req: Request) {
+        const user = req["payload"] as { id: number } | undefined;
+        return this.homeService.getHomepageData(user?.id);
     }
 
     @Get("recently-viewed")
@@ -22,7 +23,7 @@ export class HomeController {
     @ApiQuery({ name: "page", required: false, type: Number })
     @ApiQuery({ name: "limit", required: false, type: Number })
     async getRecentlyViewed(@Req() req: Request, @Query() query: PaginationDto) {
-        const user = req["user"] as { id: number } | undefined;
+        const user = req["payload"] as { id: number } | undefined;
         if (!user?.id) {
             return { data: [], message: "Login to see your recently viewed products." };
         }

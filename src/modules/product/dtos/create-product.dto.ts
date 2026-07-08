@@ -1,6 +1,30 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { IsArray, IsEnum, IsInt, IsNotEmpty, IsNumber, IsOptional, IsPositive, IsString } from "class-validator";
+import { Type } from "class-transformer";
+import {
+    IsArray,
+    IsEnum,
+    IsInt,
+    IsNotEmpty,
+    IsNumber,
+    IsOptional,
+    IsPositive,
+    IsString,
+    ValidateNested,
+} from "class-validator";
 import { Condition, ProductStatus } from "generated/prisma/client";
+
+export class ProductVariantInputDto {
+    @IsString()
+    @IsNotEmpty()
+    @ApiProperty({ description: "Variant name, e.g. S, M, XL, Red" })
+    variantName: string;
+
+    @IsNumber()
+    @IsPositive()
+    @IsOptional()
+    @ApiProperty({ required: false, description: "Optional variant-specific price" })
+    price?: number;
+}
 
 export class CreateProductDto {
     @IsString()
@@ -53,4 +77,17 @@ export class CreateProductDto {
     @IsOptional()
     @ApiProperty({ required: false, enum: ProductStatus, default: ProductStatus.INACTIVE, description: "Product status" })
     status?: ProductStatus;
+
+    @IsArray()
+    @ValidateNested({ each: true })
+    @Type(() => ProductVariantInputDto)
+    @IsOptional()
+    @ApiProperty({ required: false, type: [ProductVariantInputDto], description: "Product variants submitted with the product form" })
+    variants?: ProductVariantInputDto[];
+
+    @IsArray()
+    @IsString({ each: true })
+    @IsOptional()
+    @ApiProperty({ required: false, type: [String], description: "Shorthand variant names, e.g. ['S','M','L']" })
+    variant_names?: string[];
 }

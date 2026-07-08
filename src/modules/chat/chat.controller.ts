@@ -1,10 +1,10 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { GetUser } from "src/common/decorators";
-import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { ChatService } from "./chat.service";
 import { CreateRoomDto } from "./dtos/create-room.dto";
 import { MessagesQueryDto } from "./dtos/messages-query.dto";
+import { ChatRoomsQueryDto } from "./dtos/chat-rooms-query.dto";
 
 @ApiTags("Chat")
 @Controller("chat")
@@ -24,7 +24,8 @@ export class ChatController {
     @ApiOperation({ summary: "List my chat rooms" })
     @ApiQuery({ name: "page", required: false, type: Number })
     @ApiQuery({ name: "limit", required: false, type: Number })
-    async getUserRooms(@GetUser("id") userId: number, @Query() query: PaginationDto) {
+    @ApiQuery({ name: "search", required: false, type: String })
+    async getUserRooms(@GetUser("id") userId: number, @Query() query: ChatRoomsQueryDto) {
         return this.chatService.getUserRooms(userId, query);
     }
 
@@ -49,5 +50,26 @@ export class ChatController {
         @GetUser("id") userId: number,
     ) {
         return this.chatService.markMessagesRead(roomId, userId);
+    }
+
+    @Patch("rooms/:id/block")
+    @ApiOperation({ summary: "Block messaging in a chat room" })
+    @ApiParam({ name: "id", type: Number })
+    async blockRoom(@Param("id", ParseIntPipe) roomId: number, @GetUser("id") userId: number) {
+        return this.chatService.blockRoom(roomId, userId);
+    }
+
+    @Patch("rooms/:id/unblock")
+    @ApiOperation({ summary: "Unblock messaging in a chat room" })
+    @ApiParam({ name: "id", type: Number })
+    async unblockRoom(@Param("id", ParseIntPipe) roomId: number, @GetUser("id") userId: number) {
+        return this.chatService.unblockRoom(roomId, userId);
+    }
+
+    @Delete("rooms/:id")
+    @ApiOperation({ summary: "Delete/hide a conversation for the authenticated user" })
+    @ApiParam({ name: "id", type: Number })
+    async deleteRoomForUser(@Param("id", ParseIntPipe) roomId: number, @GetUser("id") userId: number) {
+        return this.chatService.deleteRoomForUser(roomId, userId);
     }
 }

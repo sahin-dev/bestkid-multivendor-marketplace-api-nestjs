@@ -25,28 +25,24 @@ export class JwtGuard implements CanActivate {
         const isPublic = this.reflector.getAllAndOverride<boolean>(PUBLIC_KEY, [context.getHandler(), context.getClass()]);
 
         if (isPublic) {
+            const authorization = request.headers.authorization;
+            if (!authorization) {
+                return true
+            }
+
+            try {
+                const token = this.extractToken(request)
+                await this.attachUserToRequest(request, token)
+            } catch {
+                return true
+            }
+
             return true
         }
 
         try {
             const token = this.extractToken(request)
-
-            const user = await this.authProvider.verifyToken(token)
-
-            if (user.is_blocked) {
-                throw new BadRequestException('Sorry, your are blocked by the admin.Kindly, Contact support.Thanks')
-            }
-
-            // if(user.is_deleted){
-            //     throw new BadRequestException('Sorry, your account has been deleted. If you think this is a mistake, please contact support.Thanks')
-            // }
-
-            request['user'] = user;
-            request['payload'] = {
-                id: user.id,
-                role: user.role,
-                email: user.email
-            };
+            await this.attachUserToRequest(request, token)
 
             return true
 
@@ -70,6 +66,25 @@ export class JwtGuard implements CanActivate {
         }
 
         return token
+    }
+
+    private async attachUserToRequest(request: Request, token: string) {
+        const user = await this.authProvider.verifyToken(token)
+
+        if (user.is_blocked) {
+            throw new BadRequestException('Sorry, your are blocked by the admin.Kindly, Contact support.Thanks')
+        }
+
+        // if(user.is_deleted){
+        //     throw new BadRequestException('Sorry, your account has been deleted. If you think this is a mistake, please contact support.Thanks')
+        // }
+
+        request['user'] = user;
+        request['payload'] = {
+            id: user.id,
+            role: user.role,
+            email: user.email
+        };
     }
 
 

@@ -5,6 +5,15 @@ model Order {
   status      OrderStatus @default(PENDING)
   total       Float       @default(0)
 
+  cancelled_at         DateTime?
+  cancelled_by_user_id Int?
+  cancelled_by_actor   OrderCancellationActor?
+  cancellation_reason  String?
+  confirmed_at         DateTime?
+  processing_at        DateTime?
+  shipped_at           DateTime?
+  delivered_at         DateTime?
+
   // Delivery info snapshot at order time
   delivery_partner  String?
   delivery_cost     Float   @default(0)
@@ -38,12 +47,17 @@ model OrderItem {
   price     Float
 
   order          Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product        Product        @relation(fields: [productId], references: [id])
+  variant        ProductVariant? @relation(fields: [variantId], references: [id])
   returnRequests ReturnRequest[]
+  review         ProductReview?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@map("order_items")
+  @@index([productId])
+  @@index([variantId])
 }
 
 enum OrderStatus {
@@ -54,4 +68,11 @@ enum OrderStatus {
   DELIVERED
   CANCELLED
   REFUNDED
+}
+
+enum OrderCancellationActor {
+  BUYER
+  SELLER
+  ADMIN
+  SYSTEM
 }

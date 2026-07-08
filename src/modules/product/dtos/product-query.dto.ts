@@ -1,7 +1,15 @@
 import { ApiPropertyOptional } from "@nestjs/swagger";
-import { Type } from "class-transformer";
-import { IsEnum, IsInt, IsNumber, IsOptional, IsPositive, IsString, Min } from "class-validator";
+import { Transform, Type } from "class-transformer";
+import { IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, Max, Min } from "class-validator";
 import { Condition, ProductStatus } from "generated/prisma/client";
+
+export enum ProductSort {
+    LATEST = "latest",
+    PRICE_LOW = "price_low",
+    PRICE_HIGH = "price_high",
+    RATING = "rating",
+    POPULAR = "popular",
+}
 
 export class ProductQueryDto {
     @IsOptional()
@@ -37,6 +45,12 @@ export class ProductQueryDto {
 
     @IsOptional()
     @Type(() => Number)
+    @IsInt()
+    @ApiPropertyOptional({ description: "Filter by seller ID" })
+    sellerId?: number;
+
+    @IsOptional()
+    @Type(() => Number)
     @IsNumber()
     @Min(0)
     @ApiPropertyOptional({ description: "Minimum original price" })
@@ -58,4 +72,28 @@ export class ProductQueryDto {
     @IsEnum(Condition)
     @ApiPropertyOptional({ enum: Condition, description: "Filter by product condition" })
     condition?: Condition;
+
+    @IsOptional()
+    @IsEnum(ProductSort)
+    @ApiPropertyOptional({ enum: ProductSort, default: ProductSort.LATEST, description: "Sort product results" })
+    sort?: ProductSort = ProductSort.LATEST;
+
+    @IsOptional()
+    @Type(() => Number)
+    @IsNumber()
+    @Min(1)
+    @Max(5)
+    @ApiPropertyOptional({ description: "Minimum average rating" })
+    minRating?: number;
+
+    @IsOptional()
+    @Transform(({ value }) => value === true || value === "true")
+    @IsBoolean()
+    @ApiPropertyOptional({ description: "Only show discounted products" })
+    discountedOnly?: boolean;
+
+    @IsOptional()
+    @IsString()
+    @ApiPropertyOptional({ description: "Filter by variant or size label" })
+    size?: string;
 }

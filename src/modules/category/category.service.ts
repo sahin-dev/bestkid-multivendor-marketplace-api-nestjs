@@ -20,7 +20,7 @@ export class CategoryService {
         const { page = 1, limit = 10 } = query ?? {};
         const skip = (page - 1) * limit;
 
-        const [data, total] = await Promise.all([
+        const [data, total, categoryCounts, subCategoryCounts] = await Promise.all([
             this.prismaService.category.findMany({
                 skip,
                 take: limit,
@@ -30,10 +30,30 @@ export class CategoryService {
                 orderBy: { createdAt: "asc" },
             }),
             this.prismaService.category.count(),
+            this.prismaService.product.groupBy({
+                by: ["categoryId"],
+                where: { status: "ACTIVE" },
+                _count: { id: true },
+            }),
+            this.prismaService.product.groupBy({
+                by: ["subCategoryId"],
+                where: { status: "ACTIVE" },
+                _count: { id: true },
+            }),
         ]);
 
+        const categoryCountMap = new Map(categoryCounts.map((item) => [item.categoryId, item._count.id]));
+        const subCategoryCountMap = new Map(subCategoryCounts.map((item) => [item.subCategoryId, item._count.id]));
+
         return {
-            data,
+            data: data.map((category) => ({
+                ...category,
+                product_count: categoryCountMap.get(category.id) ?? 0,
+                subCategories: category.subCategories.map((subCategory) => ({
+                    ...subCategory,
+                    product_count: subCategoryCountMap.get(subCategory.id) ?? 0,
+                })),
+            })),
             meta: {
                 total,
                 page,
@@ -44,16 +64,34 @@ export class CategoryService {
     }
 
     async findCategoryById(id: number) {
-        const category = await this.prismaService.category.findUnique({
+        const [category, categoryCount, subCategoryCounts] = await Promise.all([
+            this.prismaService.category.findUnique({
             where: { id },
             include: {
                 subCategories: true,
             },
-        });
+            }),
+            this.prismaService.product.count({ where: { categoryId: id, status: "ACTIVE" } }),
+            this.prismaService.product.groupBy({
+                by: ["subCategoryId"],
+                where: { categoryId: id, status: "ACTIVE" },
+                _count: { id: true },
+            }),
+        ]);
         if (!category) {
             throw new NotFoundException(`Category with ID ${id} not found`);
         }
-        return category;
+
+        const subCategoryCountMap = new Map(subCategoryCounts.map((item) => [item.subCategoryId, item._count.id]));
+
+        return {
+            ...category,
+            product_count: categoryCount,
+            subCategories: category.subCategories.map((subCategory) => ({
+                ...subCategory,
+                product_count: subCategoryCountMap.get(subCategory.id) ?? 0,
+            })),
+        };
     }
 
     async updateCategory(id: number, dto: UpdateCategoryDto) {

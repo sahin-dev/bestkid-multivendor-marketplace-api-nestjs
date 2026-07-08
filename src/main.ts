@@ -9,10 +9,31 @@ import { ResponseTransformerInterceptor } from './common/interceptors/responseTr
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
+  const configuredOrigins = process.env.CORS_ORIGINS
+    ?.split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
   app.enableCors({
-    origin: '*', // Allow all origins
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE', // Allow all methods
-    allowedHeaders: 'Content-Type, Accept, Authorization', // Allow common headers
+    origin: (origin, callback) => {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      if (!configuredOrigins?.length) {
+        callback(null, true);
+        return;
+      }
+
+      callback(null, configuredOrigins.includes(origin));
+    },
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+    exposedHeaders: ['Content-Disposition'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    preflightContinue: false,
+    optionsSuccessStatus: 204,
   });
 
   const uploadsDir = join(process.cwd(), 'uploads');
@@ -25,21 +46,21 @@ async function bootstrap() {
   app.setViewEngine("hbs");
 
   app.useGlobalPipes(new ValidationPipe({
-    transform:true,
-    whitelist:true,
-    forbidNonWhitelisted:true
+    transform: true,
+    whitelist: true,
+    forbidNonWhitelisted: true
   }))
 
-  
- const reflector = app.get(Reflector)
+
+  const reflector = app.get(Reflector)
 
   app.useGlobalInterceptors(new ResponseTransformerInterceptor(reflector))
 
 
-   const config = new DocumentBuilder()
+  const config = new DocumentBuilder()
     .setTitle('BestKid Api')
     .setDescription('Backend API for the BestKid multivendor marketplace. Use the Bearer auth control with a JWT returned from /auth/login or /auth/admin/login for protected endpoints.')
-    .addServer(process.env.SWAGGER_SERVER_URL ?? `http://localhost:${process.env.PORT ?? 3000}`)
+    // .addServer(process.env.SWAGGER_SERVER_URL!)
     .setVersion('1.0')
     .addTag('Auth', 'Registration, login, OTP verification, and password reset flows')
     .addTag('Admin Dashboard', 'Admin dashboard cards, activity, and platform earnings')
@@ -50,6 +71,7 @@ async function bootstrap() {
     .addTag('Orders', 'Buyer, seller, and admin order workflows')
     .addTag('Returns', 'Return request workflows')
     .addTag('Cart', 'Authenticated cart management')
+    .addTag('Wishlist', 'Authenticated saved products')
     .addTag('Account Settings', 'Addresses, preferences, connected account, and account deletion')
     .addTag('Profile', 'Authenticated user/admin profile and password management')
     .addTag('Seller', 'Seller account options and seller earnings')
@@ -60,13 +82,13 @@ async function bootstrap() {
     .addTag('Stripe', 'Stripe seller onboarding and admin connected accounts')
     .addTag('Uploads', 'File upload and deletion')
     .addBearerAuth(
-    {
-      type: 'http',
-      scheme: 'bearer',
-      bearerFormat: 'JWT',
-      description: 'Enter JWT token',
-    },
-    'access-token',) // name for the auth scheme
+      {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT',
+        description: 'Enter JWT token',
+      },
+      'access-token',) // name for the auth scheme
     .build();
 
   const documentFactory = () => SwaggerModule.createDocument(app, config);

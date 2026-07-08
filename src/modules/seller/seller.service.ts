@@ -37,6 +37,36 @@ export class SellerService {
         };
     }
 
+    async getReadiness(sellerId: number) {
+        const seller = await this.prismaService.baseUser.findUnique({
+            where: { id: sellerId },
+            select: {
+                stripe_account_id: true,
+                stripe_onboarding_complete: true,
+                delivery_option: true,
+            },
+        });
+
+        const deliveryConfigured = this.isDeliveryConfigured(seller?.delivery_option);
+        const stripeConnected = Boolean(seller?.stripe_onboarding_complete);
+
+        return {
+            stripe_connected: stripeConnected,
+            stripe_account_id: seller?.stripe_account_id ?? null,
+            delivery_configured: deliveryConfigured,
+            can_create_product: stripeConnected,
+            can_publish_product: stripeConnected && deliveryConfigured,
+            blockers: [
+                ...(stripeConnected ? [] : ["STRIPE_ACCOUNT_REQUIRED"]),
+                ...(deliveryConfigured ? [] : ["DELIVERY_INFORMATION_MISSING"]),
+            ],
+            actions: {
+                connect_stripe: !stripeConnected,
+                setup_delivery: !deliveryConfigured,
+            },
+        };
+    }
+
     async getEarnings(sellerId: number, query: SellerEarningsQueryDto) {
         const { page = 1, limit = 10, period = SellerEarningsPeriod.TODAY } = query;
         const skip = (page - 1) * limit;
@@ -119,5 +149,24 @@ export class SellerService {
         }
 
         return { gte: start };
+    }
+
+    private isDeliveryConfigured(deliveryOption: any) {
+        if (!deliveryOption) {
+            return false;
+        }
+
+        const hasDomestic =
+            Boolean(deliveryOption.domestic_partner) &&
+            deliveryOption.domestic_cost !== null &&
+            deliveryOption.domestic_days_min !== null &&
+            deliveryOption.domestic_days_max !== null;
+        const hasInternational =
+            Boolean(deliveryOption.international_partner) &&
+            deliveryOption.international_cost !== null &&
+            deliveryOption.international_days_min !== null &&
+            deliveryOption.international_days_max !== null;
+
+        return hasDomestic || hasInternational;
     }
 }

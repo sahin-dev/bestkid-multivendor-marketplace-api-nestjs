@@ -16,6 +16,8 @@ model BaseUser {
   seller_tier                SellerTier @default(BASIC_SELLER)
 
   products        Product[]
+  wishlist_items  WishlistItem[]
+  reviews         ProductReview[]
   buyer_chat      ChatRoom[] @relation("BuyerChatRoom")
   seller_chat     ChatRoom[] @relation("SellerChatRoom")
   cart            Cart?

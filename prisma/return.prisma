@@ -3,10 +3,18 @@ model ReturnRequest {
   orderItemId Int
   userId      Int
   reason      String
+  message     String?
   images      String[]
   status      ReturnStatus  @default(PENDING)
+  seller_response         String?
+  seller_rejection_reason String?
+  return_address          String?
+  resolved_at             DateTime?
+  completed_at            DateTime?
+  refunded_at             DateTime?
+  refund_amount           Float?
 
-  orderItem OrderItem @relation(fields: [orderItemId], references: [id])
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
   user      BaseUser  @relation(fields: [userId], references: [id])
 
   createdAt DateTime @default(now())
@@ -14,11 +22,14 @@ model ReturnRequest {
 
   @@index([userId])
   @@index([orderItemId])
+  @@unique([orderItemId])
   @@map("return_requests")
 }
 
 enum ReturnStatus {
   PENDING
   APPROVED
+  PROCESSING
+  COMPLETED
   REJECTED
 }

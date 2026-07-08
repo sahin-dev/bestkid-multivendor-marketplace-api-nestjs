@@ -1,4 +1,17 @@
 import { Test, TestingModule } from '@nestjs/testing';
+
+jest.mock('./user.service', () => ({
+  UserService: class UserService {},
+}));
+
+jest.mock('./AuthProvider', () => ({
+  AuthProvider: class AuthProvider {},
+}));
+
+jest.mock('src/common/providres/OtpGenerator.provider', () => ({
+  OtpService: class OtpService {},
+}));
+
 import { AuthService } from './auth.service';
 import { UserService } from './user.service';
 import { AuthProvider } from './AuthProvider';

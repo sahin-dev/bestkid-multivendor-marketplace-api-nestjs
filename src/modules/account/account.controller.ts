@@ -19,6 +19,18 @@ export class AccountController {
         return this.accountService.getSettings(userId);
     }
 
+    @Get("header-summary")
+    @ApiOperation({ summary: "Get logged-in header badge counts and profile summary" })
+    getHeaderSummary(@GetUser("id") userId: number) {
+        return this.accountService.getHeaderSummary(userId);
+    }
+
+    @Get("buying-summary")
+    @ApiOperation({ summary: "Get counts for the Buying hub page" })
+    getBuyingSummary(@GetUser("id") userId: number) {
+        return this.accountService.getBuyingSummary(userId);
+    }
+
     @Get("addresses")
     @ApiOperation({ summary: "List saved addresses" })
     listAddresses(@GetUser("id") userId: number) {

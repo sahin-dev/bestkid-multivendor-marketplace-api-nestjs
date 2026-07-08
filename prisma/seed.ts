@@ -44,7 +44,7 @@ const categoryData = [
 ];
 
 const adminUser = {
-  email: "admin@bestkid.test",
+  email: "test_admin@yopmail.com",
   full_name: "BestKid Admin",
   phone: "+359 88 000 0000",
   country: "Bulgaria",

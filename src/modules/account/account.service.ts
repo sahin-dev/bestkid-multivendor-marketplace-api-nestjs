@@ -38,6 +38,71 @@ export class AccountService {
         };
     }
 
+    async getHeaderSummary(userId: number) {
+        const [user, wishlistCount, unreadNotificationCount, cart] = await Promise.all([
+            this.prismaService.baseUser.findUnique({
+                where: { id: userId },
+                select: {
+                    id: true,
+                    email: true,
+                    role: true,
+                    profile: { select: { full_name: true, avatar_url: true } },
+                },
+            }),
+            this.prismaService.wishlistItem.count({ where: { userId } }),
+            this.prismaService.notification.count({ where: { userId, isRead: false } }),
+            this.prismaService.cart.findUnique({
+                where: { userId },
+                include: { cartItems: { select: { quantity: true } } },
+            }),
+        ]);
+
+        if (!user) {
+            throw new NotFoundException("User not found");
+        }
+
+        return {
+            user,
+            counts: {
+                wishlist: wishlistCount,
+                cart: cart?.cartItems.reduce((sum, item) => sum + item.quantity, 0) ?? 0,
+                notifications: unreadNotificationCount,
+            },
+        };
+    }
+
+    async getBuyingSummary(userId: number) {
+        const [activeOrders, completedOrders, cancelledOrders, returnRequests, acceptedReturns, rejectedReturns] =
+            await Promise.all([
+                this.prismaService.order.count({
+                    where: { userId, status: { in: this.activeOrderStatuses } },
+                }),
+                this.prismaService.order.count({ where: { userId, status: OrderStatus.DELIVERED } }),
+                this.prismaService.order.count({ where: { userId, status: OrderStatus.CANCELLED } }),
+                this.prismaService.returnRequest.count({ where: { userId, status: ReturnStatus.PENDING } }),
+                this.prismaService.returnRequest.count({
+                    where: {
+                        userId,
+                        status: { in: [ReturnStatus.APPROVED, ReturnStatus.PROCESSING, ReturnStatus.COMPLETED] },
+                    },
+                }),
+                this.prismaService.returnRequest.count({ where: { userId, status: ReturnStatus.REJECTED } }),
+            ]);
+
+        return {
+            orders: {
+                active: activeOrders,
+                complete: completedOrders,
+                canceled: cancelledOrders,
+            },
+            returns: {
+                return_requests: returnRequests,
+                accepted: acceptedReturns,
+                rejected: rejectedReturns,
+            },
+        };
+    }
+
     async listAddresses(userId: number) {
         await this.ensureUserExists(userId);
         return this.prismaService.userAddress.findMany({
@@ -165,6 +230,7 @@ export class AccountService {
             await tx.notification.deleteMany({ where: { userId } });
             await tx.otpVerification.deleteMany({ where: { userId } });
             await tx.recentlyView.deleteMany({ where: { userId } });
+            await tx.wishlistItem.deleteMany({ where: { userId } });
             await tx.sellerDeliveryOption.deleteMany({ where: { sellerId: userId } });
 
             const cart = await tx.cart.findUnique({ where: { userId } });
@@ -193,6 +259,7 @@ export class AccountService {
             if (productIds.length > 0) {
                 await tx.cartItem.deleteMany({ where: { productId: { in: productIds } } });
                 await tx.recentlyView.deleteMany({ where: { productId: { in: productIds } } });
+                await tx.wishlistItem.deleteMany({ where: { productId: { in: productIds } } });
                 await tx.productReview.deleteMany({ where: { productId: { in: productIds } } });
                 await tx.productVariant.deleteMany({ where: { productId: { in: productIds } } });
                 await tx.product.deleteMany({ where: { id: { in: productIds } } });

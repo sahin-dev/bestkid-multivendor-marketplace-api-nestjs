@@ -10,7 +10,9 @@ import { ProductQueryDto } from "./dtos/product-query.dto";
 import { UpdateProductAuthStatusDto } from "./dtos/update-product-auth-status.dto";
 import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { AdminProductApprovalFilter, AdminProductQueryDto } from "./dtos/admin-product-query.dto";
-import { AuthenticationStatus } from "generated/prisma/client";
+import { AuthenticationStatus, ProductStatus } from "generated/prisma/client";
+import type { Request } from "express";
+import { TokenPayload } from "../auth/types/TokenPayload.type";
 
 @ApiTags("Products")
 @Controller("products")
@@ -35,8 +37,13 @@ export class ProductController {
     @ApiQuery({ name: "categoryId", required: false, type: Number })
     @ApiQuery({ name: "sellerId", required: false, type: Number })
     @ApiQuery({ name: "search", required: false, type: String })
-    async findAllProducts(@Query() query: ProductQueryDto) {
-        return this.productService.findAllProducts(query);
+    @ApiQuery({ name: "sort", required: false, enum: ["latest", "price_low", "price_high", "rating", "popular"] })
+    @ApiQuery({ name: "minRating", required: false, type: Number })
+    @ApiQuery({ name: "discountedOnly", required: false, type: Boolean })
+    @ApiQuery({ name: "size", required: false, type: String })
+    async findAllProducts(@Query() query: ProductQueryDto, @Req() req: Request) {
+        const user = req["payload"] as { id: number } | undefined;
+        return this.productService.findAllProducts(query, user?.id);
     }
 
     @Get("admin/all")
@@ -54,6 +61,43 @@ export class ProductController {
     @ApiQuery({ name: "approval", required: false, enum: AdminProductApprovalFilter })
     async findAllProductsAdmin(@Query() query: AdminProductQueryDto) {
         return this.productService.findAllProductsAdmin(query);
+    }
+
+    @Get("seller/my")
+    @ApiBearerAuth("access-token")
+    @Roles("USER", "ADMIN")
+    @ApiOperation({ summary: "Seller: list my products for active/inactive product tabs" })
+    @ApiQuery({ name: "page", required: false, type: Number })
+    @ApiQuery({ name: "limit", required: false, type: Number })
+    @ApiQuery({ name: "search", required: false, type: String })
+    @ApiQuery({ name: "status", required: false, enum: ProductStatus })
+    async findSellerProducts(@GetUser("id") sellerId: number, @Query() query: ProductQueryDto) {
+        return this.productService.findSellerProducts(sellerId, query);
+    }
+
+    @Get("seller/:id")
+    @ApiBearerAuth("access-token")
+    @Roles("USER", "ADMIN")
+    @ApiOperation({ summary: "Seller: get one of my product listings" })
+    @ApiParam({ name: "id", type: Number })
+    async findSellerProductById(
+        @Param("id", ParseIntPipe) productId: number,
+        @GetUser() payload: TokenPayload,
+    ) {
+        return this.productService.findSellerProductById(productId, payload.id, payload.role === "ADMIN");
+    }
+
+    @Patch("seller/:id/status")
+    @ApiBearerAuth("access-token")
+    @Roles("USER", "ADMIN")
+    @ApiOperation({ summary: "Seller: mark a product active, inactive, or out of stock" })
+    @ApiParam({ name: "id", type: Number })
+    async updateSellerProductStatus(
+        @Param("id", ParseIntPipe) productId: number,
+        @Body("status") status: ProductStatus,
+        @GetUser() payload: TokenPayload,
+    ) {
+        return this.productService.updateSellerProductStatus(productId, payload.id, status, payload.role === "ADMIN");
     }
 
     @Patch("admin/:id/auth-status")
@@ -74,7 +118,7 @@ export class ProductController {
     @ApiOperation({ summary: "Get product details" })
     @ApiParam({ name: "id", type: Number })
     async findProductById(@Param("id", ParseIntPipe) id: number, @Req() req: Request) {
-        const user = req["user"] as { id: number } | undefined;
+        const user = req["payload"] as { id: number } | undefined;
         return this.productService.findProductById(id, user?.id);
     }
 
@@ -84,8 +128,12 @@ export class ProductController {
     @ApiOperation({ summary: "Update a product listing" })
     @ApiParam({ name: "id", type: Number })
     @ApiBody({ type: UpdateProductDto })
-    async updateProduct(@Param("id", ParseIntPipe) id: number, @Body() dto: UpdateProductDto) {
-        return this.productService.updateProduct(id, dto);
+    async updateProduct(
+        @Param("id", ParseIntPipe) id: number,
+        @Body() dto: UpdateProductDto,
+        @GetUser() payload: TokenPayload,
+    ) {
+        return this.productService.updateProduct(id, dto, payload.id, payload.role === "ADMIN");
     }
 
     @Delete(":id")
@@ -93,8 +141,8 @@ export class ProductController {
     @Roles("ADMIN", "USER")
     @ApiOperation({ summary: "Delete a product listing" })
     @ApiParam({ name: "id", type: Number })
-    async deleteProduct(@Param("id", ParseIntPipe) id: number) {
-        return this.productService.deleteProduct(id);
+    async deleteProduct(@Param("id", ParseIntPipe) id: number, @GetUser() payload: TokenPayload) {
+        return this.productService.deleteProduct(id, payload.id, payload.role === "ADMIN");
     }
 
     @Post(":id/variants")
@@ -103,8 +151,12 @@ export class ProductController {
     @ApiOperation({ summary: "Create a product variant", description: "Use variants for size/option-specific prices." })
     @ApiParam({ name: "id", type: Number })
     @ApiBody({ type: CreateVariantDto })
-    async createVariant(@Param("id", ParseIntPipe) productId: number, @Body() dto: CreateVariantDto) {
-        return this.productService.createVariant(productId, dto);
+    async createVariant(
+        @Param("id", ParseIntPipe) productId: number,
+        @Body() dto: CreateVariantDto,
+        @GetUser() payload: TokenPayload,
+    ) {
+        return this.productService.createVariant(productId, dto, payload.id, payload.role === "ADMIN");
     }
 
     @Delete(":id/variants/:variantId")
@@ -116,8 +168,9 @@ export class ProductController {
     async deleteVariant(
         @Param("id", ParseIntPipe) productId: number,
         @Param("variantId", ParseIntPipe) variantId: number,
+        @GetUser() payload: TokenPayload,
     ) {
-        return this.productService.deleteVariant(productId, variantId);
+        return this.productService.deleteVariant(productId, variantId, payload.id, payload.role === "ADMIN");
     }
 
     @Post(":id/reviews")

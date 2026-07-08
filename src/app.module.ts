@@ -26,6 +26,7 @@ import { AccountModule } from './modules/account/account.module';
 import { SellerModule } from './modules/seller/seller.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { CouponModule } from './modules/coupon/coupon.module';
+import { WishlistModule } from './modules/wishlist/wishlist.module';
 
 @Module({
   imports: [
@@ -50,6 +51,7 @@ import { CouponModule } from './modules/coupon/coupon.module';
     SellerModule,
     AdminModule,
     CouponModule,
+    WishlistModule,
   ],
   controllers: [AppController],
   providers: [AppService],

@@ -1,11 +1,13 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateOrderDto } from "./dtos/create-order.dto";
-import { OrderQueryDto } from "./dtos/order-query.dto";
+import { BuyerOrderTab, OrderQueryDto, SellerOrderTab } from "./dtos/order-query.dto";
 import { CheckoutDto } from "./dtos/checkout.dto";
 import { DeliveryService } from "../delivery/delivery.service";
-import { OrderStatus, NotificationType } from "generated/prisma/client";
+import { OrderCancellationActor, OrderStatus, NotificationType } from "generated/prisma/client";
 import { NotificationService } from "../notification/notification.service";
+import { CreateReviewDto } from "../product/dtos/create-review.dto";
+import { ChatService } from "../chat/chat.service";
 
 @Injectable()
 export class OrderService {
@@ -13,6 +15,7 @@ export class OrderService {
         private readonly prismaService: PrismaService,
         private readonly deliveryService: DeliveryService,
         private readonly notificationService: NotificationService,
+        private readonly chatService: ChatService,
     ) {}
 
     async createOrder(userId: number, dto: CreateOrderDto) {
@@ -216,12 +219,14 @@ export class OrderService {
     }
 
     async findAllUserOrders(userId: number, query: OrderQueryDto) {
-        const { page = 1, limit = 10, status } = query;
+        const { page = 1, limit = 10, status, tab } = query;
         const skip = (page - 1) * limit;
 
         const whereClause: any = { userId };
         if (status) {
             whereClause.status = status;
+        } else if (tab) {
+            whereClause.status = { in: this.getStatusesForBuyerTab(tab) };
         }
 
         const [data, total] = await Promise.all([
@@ -230,12 +235,16 @@ export class OrderService {
                 skip,
                 take: limit,
                 include: {
-                    items: true,
-                    user: {
+                    seller: {
                         select: {
                             id: true,
                             email: true,
-                            profile: { select: { full_name: true, avatar_url: true, phone: true } },
+                            profile: { select: { full_name: true, avatar_url: true, country: true } },
+                        },
+                    },
+                    items: {
+                        include: {
+                            product: { select: { id: true, name: true, image_urls: true } },
                         },
                     },
                 },
@@ -247,7 +256,7 @@ export class OrderService {
         ]);
 
         return {
-            data,
+            data: data.map((order) => this.formatOrderCard(order)),
             meta: {
                 total,
                 page,
@@ -258,12 +267,14 @@ export class OrderService {
     }
 
     async findAllSellerOrders(sellerId: number, query: OrderQueryDto) {
-        const { page = 1, limit = 10, status } = query;
+        const { page = 1, limit = 10, status, sellerTab } = query;
         const skip = (page - 1) * limit;
 
         const whereClause: any = { sellerId };
         if (status) {
             whereClause.status = status;
+        } else if (sellerTab) {
+            whereClause.status = { in: this.getStatusesForSellerTab(sellerTab) };
         }
 
         const [data, total] = await Promise.all([
@@ -272,7 +283,19 @@ export class OrderService {
                 skip,
                 take: limit,
                 include: {
-                    items: true,
+                    user: {
+                        select: {
+                            id: true,
+                            email: true,
+                            profile: { select: { full_name: true, avatar_url: true, phone: true } },
+                        },
+                    },
+                    items: {
+                        include: {
+                            product: { select: { id: true, name: true, image_urls: true } },
+                            variant: true,
+                        },
+                    },
                 },
                 orderBy: {
                     createdAt: "desc",
@@ -282,7 +305,7 @@ export class OrderService {
         ]);
 
         return {
-            data,
+            data: data.map((order) => this.formatSellerOrderCard(order)),
             meta: {
                 total,
                 page,
@@ -295,16 +318,7 @@ export class OrderService {
     async findOrderById(orderId: number, userId?: number, isAdmin = false) {
         const order = await this.prismaService.order.findUnique({
             where: { id: orderId },
-            include: {
-                items: true,
-                user: {
-                    select: {
-                        id: true,
-                        email: true,
-                        profile: { select: { full_name: true, avatar_url: true, phone: true } },
-                    },
-                },
-            },
+            include: this.getOrderDetailInclude(),
         });
 
         if (!order) {
@@ -315,22 +329,13 @@ export class OrderService {
             throw new ForbiddenException("You do not have permission to access this order");
         }
 
-        return order;
+        return this.formatOrderDetail(order);
     }
 
     async findSellerOrderById(orderId: number, sellerId: number) {
         const order = await this.prismaService.order.findUnique({
             where: { id: orderId },
-            include: {
-                items: true,
-                user: {
-                    select: {
-                        id: true,
-                        email: true,
-                        profile: { select: { full_name: true, avatar_url: true, phone: true } },
-                    },
-                },
-            },
+            include: this.getOrderDetailInclude(),
         });
 
         if (!order) {
@@ -341,21 +346,120 @@ export class OrderService {
             throw new ForbiddenException("You do not have permission to access this order");
         }
 
-        return order;
+        return this.formatSellerOrderDetail(order);
     }
 
-    async cancelOrder(orderId: number, userId: number) {
+    async findOrCreateOrderChat(orderId: number, userId: number) {
+        const order = await this.prismaService.order.findUnique({ where: { id: orderId } });
+        if (!order) {
+            throw new NotFoundException(`Order with ID ${orderId} not found`);
+        }
+
+        if (order.userId !== userId && order.sellerId !== userId) {
+            throw new ForbiddenException("You do not have permission to access this order conversation");
+        }
+
+        return this.chatService.findOrCreateRoom(order.userId, order.sellerId);
+    }
+
+    async cancelOrder(orderId: number, userId: number, reason?: string) {
         const order = await this.findOrderById(orderId, userId);
 
         if (order.status !== OrderStatus.PENDING && order.status !== OrderStatus.CONFIRMED) {
             throw new BadRequestException(`Order cannot be cancelled in its current status: ${order.status}`);
         }
 
-        return this.prismaService.order.update({
+        const updated = await this.prismaService.order.update({
             where: { id: orderId },
-            data: { status: OrderStatus.CANCELLED },
-            include: { items: true },
+            data: {
+                status: OrderStatus.CANCELLED,
+                cancelled_at: new Date(),
+                cancelled_by_user_id: userId,
+                cancelled_by_actor: OrderCancellationActor.BUYER,
+                cancellation_reason: reason,
+            },
+            include: this.getOrderDetailInclude(),
         });
+
+        try {
+            await this.notificationService.create(
+                updated.sellerId,
+                "Order Cancelled",
+                `Order #${updated.id} has been cancelled by the buyer.`,
+                NotificationType.ORDER,
+            );
+        } catch (e) {
+            console.error("Failed to send cancellation notification", e);
+        }
+
+        return this.formatOrderDetail(updated);
+    }
+
+    async reviewOrderItem(userId: number, orderItemId: number, dto: CreateReviewDto) {
+        this.assertReviewTextWithinWordLimit(dto.review);
+
+        const orderItem = await this.prismaService.orderItem.findUnique({
+            where: { id: orderItemId },
+            include: {
+                order: true,
+                product: true,
+                review: true,
+            },
+        });
+
+        if (!orderItem) {
+            throw new NotFoundException(`Order item with ID ${orderItemId} not found`);
+        }
+
+        if (orderItem.order.userId !== userId) {
+            throw new ForbiddenException("You do not own this order item");
+        }
+
+        if (orderItem.order.status !== OrderStatus.DELIVERED) {
+            throw new BadRequestException("You can review an item only after the order is delivered");
+        }
+
+        if (orderItem.review) {
+            throw new BadRequestException("This order item has already been reviewed");
+        }
+
+        const review = await this.prismaService.$transaction(async (tx) => {
+            const created = await tx.productReview.create({
+                data: {
+                    productId: orderItem.productId,
+                    orderItemId,
+                    userId,
+                    rating: dto.rating,
+                    review: dto.review,
+                },
+                include: {
+                    user: {
+                        select: {
+                            id: true,
+                            profile: { select: { full_name: true, avatar_url: true } },
+                        },
+                    },
+                },
+            });
+
+            const aggregates = await tx.productReview.aggregate({
+                where: { productId: orderItem.productId },
+                _count: { id: true },
+                _avg: { rating: true },
+            });
+
+            await tx.product.update({
+                where: { id: orderItem.productId },
+                data: {
+                    total_reviews: aggregates._count.id,
+                    average_rating: aggregates._avg.rating ?? 0,
+                },
+            });
+
+            return created;
+        });
+
+        return review;
     }
 
     async updateSellerOrderStatus(orderId: number, sellerId: number, status: OrderStatus) {
@@ -368,10 +472,10 @@ export class OrderService {
         }
 
         const validTransitions: Record<OrderStatus, OrderStatus[]> = {
-            [OrderStatus.PENDING]: [OrderStatus.CONFIRMED],
-            [OrderStatus.CONFIRMED]: [OrderStatus.PROCESSING],
+            [OrderStatus.PENDING]: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
+            [OrderStatus.CONFIRMED]: [OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.CANCELLED],
             [OrderStatus.PROCESSING]: [OrderStatus.SHIPPED],
-            [OrderStatus.SHIPPED]: [],
+            [OrderStatus.SHIPPED]: [OrderStatus.DELIVERED],
             [OrderStatus.DELIVERED]: [],
             [OrderStatus.CANCELLED]: [],
             [OrderStatus.REFUNDED]: [],
@@ -386,8 +490,18 @@ export class OrderService {
 
         const updated = await this.prismaService.order.update({
             where: { id: orderId },
-            data: { status },
-            include: { items: true },
+            data: {
+                status,
+                ...this.getOrderTimelineUpdate(status),
+                ...(status === OrderStatus.CANCELLED
+                    ? {
+                          cancelled_at: new Date(),
+                          cancelled_by_user_id: sellerId,
+                          cancelled_by_actor: OrderCancellationActor.SELLER,
+                      }
+                    : {}),
+            },
+            include: this.getOrderDetailInclude(),
         });
 
         // Notify buyer
@@ -402,7 +516,7 @@ export class OrderService {
             console.error("Failed to send status update notification", e);
         }
 
-        return updated;
+        return this.formatSellerOrderDetail(updated);
     }
 
     async findAllOrdersAdmin(query: OrderQueryDto) {
@@ -448,8 +562,17 @@ export class OrderService {
 
         const updated = await this.prismaService.order.update({
             where: { id: orderId },
-            data: { status },
-            include: { items: true },
+            data: {
+                status,
+                ...this.getOrderTimelineUpdate(status),
+                ...(status === OrderStatus.CANCELLED
+                    ? {
+                          cancelled_at: new Date(),
+                          cancelled_by_actor: OrderCancellationActor.ADMIN,
+                      }
+                    : {}),
+            },
+            include: this.getOrderDetailInclude(),
         });
 
         // Notify buyer and seller
@@ -471,5 +594,326 @@ export class OrderService {
         }
 
         return updated;
+    }
+
+    private getStatusesForBuyerTab(tab: BuyerOrderTab) {
+        const tabMap: Record<BuyerOrderTab, OrderStatus[]> = {
+            [BuyerOrderTab.ACTIVE]: [
+                OrderStatus.PENDING,
+                OrderStatus.CONFIRMED,
+                OrderStatus.PROCESSING,
+                OrderStatus.SHIPPED,
+            ],
+            [BuyerOrderTab.COMPLETE]: [OrderStatus.DELIVERED],
+            [BuyerOrderTab.CANCELED]: [OrderStatus.CANCELLED],
+        };
+
+        return tabMap[tab];
+    }
+
+    private getStatusesForSellerTab(tab: SellerOrderTab) {
+        const tabMap: Record<SellerOrderTab, OrderStatus[]> = {
+            [SellerOrderTab.ORDER_PLACED]: [OrderStatus.PENDING],
+            [SellerOrderTab.CONFIRMED]: [OrderStatus.CONFIRMED],
+            [SellerOrderTab.SHIPPED]: [OrderStatus.PROCESSING, OrderStatus.SHIPPED],
+            [SellerOrderTab.DELIVERED]: [OrderStatus.DELIVERED],
+            [SellerOrderTab.CANCELED]: [OrderStatus.CANCELLED],
+        };
+
+        return tabMap[tab];
+    }
+
+    private getOrderTimelineUpdate(status: OrderStatus) {
+        const now = new Date();
+        if (status === OrderStatus.CONFIRMED) {
+            return { confirmed_at: now };
+        }
+        if (status === OrderStatus.PROCESSING) {
+            return { processing_at: now };
+        }
+        if (status === OrderStatus.SHIPPED) {
+            return { shipped_at: now };
+        }
+        if (status === OrderStatus.DELIVERED) {
+            return { delivered_at: now };
+        }
+        return {};
+    }
+
+    private getOrderDetailInclude() {
+        return {
+            user: {
+                select: {
+                    id: true,
+                    email: true,
+                    profile: { select: { full_name: true, avatar_url: true, phone: true, country: true } },
+                },
+            },
+            seller: {
+                select: {
+                    id: true,
+                    email: true,
+                    profile: { select: { full_name: true, avatar_url: true, phone: true, country: true } },
+                },
+            },
+            items: {
+                include: {
+                    product: {
+                        select: {
+                            id: true,
+                            name: true,
+                            image_urls: true,
+                            average_rating: true,
+                            total_reviews: true,
+                        },
+                    },
+                    variant: true,
+                    returnRequests: { orderBy: { createdAt: "desc" as const }, take: 1 },
+                    review: {
+                        include: {
+                            user: {
+                                select: {
+                                    id: true,
+                                    profile: { select: { full_name: true, avatar_url: true } },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        };
+    }
+
+    private formatOrderCard(order: any) {
+        return {
+            id: order.id,
+            display_id: this.getDisplayOrderId(order.id),
+            status: order.status,
+            status_label: this.getStatusLabel(order.status),
+            status_tone: this.getStatusTone(order.status),
+            createdAt: order.createdAt,
+            total: order.total,
+            item_count: order.items.reduce((sum: number, item: any) => sum + item.quantity, 0),
+            seller: order.seller,
+            preview_items: order.items.slice(0, 2).map((item: any) => ({
+                id: item.id,
+                productId: item.productId,
+                name: item.product?.name,
+                image_url: item.product?.image_urls?.[0] ?? null,
+                quantity: item.quantity,
+                price: item.price,
+            })),
+            actions: {
+                can_view_details: true,
+                can_cancel: this.canCancelOrder(order.status),
+            },
+        };
+    }
+
+    private formatSellerOrderCard(order: any) {
+        return {
+            id: order.id,
+            display_id: this.getDisplayOrderId(order.id),
+            status: order.status,
+            status_label: this.getStatusLabel(order.status),
+            status_tone: this.getStatusTone(order.status),
+            createdAt: order.createdAt,
+            total: order.total,
+            item_count: order.items.reduce((sum: number, item: any) => sum + item.quantity, 0),
+            buyer: order.user,
+            preview_items: order.items.slice(0, 2).map((item: any) => ({
+                id: item.id,
+                productId: item.productId,
+                name: item.product?.name,
+                image_url: item.product?.image_urls?.[0] ?? null,
+                variant: item.variant,
+                quantity: item.quantity,
+                price: item.price,
+            })),
+            cancellation: this.getCancellationSummary(order),
+            timeline: this.getTimelineSummary(order),
+            actions: {
+                can_view_details: true,
+                can_update_status: this.canSellerUpdateStatus(order.status),
+            },
+        };
+    }
+
+    private formatOrderDetail(order: any) {
+        return {
+            id: order.id,
+            display_id: this.getDisplayOrderId(order.id),
+            status: order.status,
+            status_label: this.getStatusLabel(order.status),
+            status_tone: this.getStatusTone(order.status),
+            createdAt: order.createdAt,
+            updatedAt: order.updatedAt,
+            total: order.total,
+            delivery: {
+                partner: order.delivery_partner,
+                cost: order.delivery_cost,
+                days_min: order.delivery_days_min,
+                days_max: order.delivery_days_max,
+            },
+            delivery_address: {
+                address: order.shippingAddress,
+                city: order.city,
+                postal_code: order.postalCode,
+                country: order.country,
+            },
+            buyer: order.user,
+            seller: order.seller,
+            cancellation: this.getCancellationSummary(order),
+            timeline: this.getTimelineSummary(order),
+            actions: {
+                can_cancel: this.canCancelOrder(order.status),
+            },
+            items: order.items.map((item: any) => this.formatOrderItem(item, order.status)),
+        };
+    }
+
+    private async formatSellerOrderDetail(order: any) {
+        const chatRoomId = await this.getExistingChatRoomId(order.userId, order.sellerId);
+        return {
+            ...this.formatOrderDetail(order),
+            chat_room_id: chatRoomId,
+            ordered_by: order.user,
+            actions: {
+                can_update_status: this.canSellerUpdateStatus(order.status),
+                can_message_buyer: true,
+            },
+            status_options: [
+                OrderStatus.PENDING,
+                OrderStatus.CONFIRMED,
+                OrderStatus.SHIPPED,
+                OrderStatus.DELIVERED,
+                OrderStatus.CANCELLED,
+            ],
+        };
+    }
+
+    private formatOrderItem(item: any, orderStatus: OrderStatus) {
+        const latestReturn = item.returnRequests?.[0] ?? null;
+        return {
+            id: item.id,
+            productId: item.productId,
+            variantId: item.variantId,
+            quantity: item.quantity,
+            price: item.price,
+            line_total: item.price * item.quantity,
+            product: item.product
+                ? {
+                      id: item.product.id,
+                      name: item.product.name,
+                      image_urls: item.product.image_urls,
+                      image_url: item.product.image_urls?.[0] ?? null,
+                      average_rating: item.product.average_rating,
+                      total_reviews: item.product.total_reviews,
+                  }
+                : null,
+            variant: item.variant
+                ? { id: item.variant.id, variantName: item.variant.variantName, price: item.variant.price }
+                : null,
+            review: item.review ?? null,
+            return_request: latestReturn,
+            actions: {
+                can_review: orderStatus === OrderStatus.DELIVERED && !item.review,
+                reviewed: Boolean(item.review),
+                can_return: orderStatus === OrderStatus.DELIVERED && !latestReturn,
+                return_requested: Boolean(latestReturn),
+            },
+        };
+    }
+
+    private getDisplayOrderId(orderId: number) {
+        return `KDF${String(orderId).padStart(10, "0")}`;
+    }
+
+    private getStatusLabel(status: OrderStatus) {
+        const labels: Record<OrderStatus, string> = {
+            [OrderStatus.PENDING]: "Order Placed",
+            [OrderStatus.CONFIRMED]: "Confirmed",
+            [OrderStatus.PROCESSING]: "Shipped",
+            [OrderStatus.SHIPPED]: "Shipped",
+            [OrderStatus.DELIVERED]: "Delivered",
+            [OrderStatus.CANCELLED]: "Canceled",
+            [OrderStatus.REFUNDED]: "Refunded",
+        };
+
+        return labels[status];
+    }
+
+    private getTimelineSummary(order: any) {
+        return {
+            confirmed_at: order.confirmed_at,
+            processing_at: order.processing_at,
+            shipped_at: order.shipped_at,
+            delivered_at: order.delivered_at,
+            cancelled_at: order.cancelled_at,
+        };
+    }
+
+    private canSellerUpdateStatus(status: OrderStatus) {
+        const finalStatuses: OrderStatus[] = [OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REFUNDED];
+        return !finalStatuses.includes(status);
+    }
+
+    private async getExistingChatRoomId(buyerId: number, sellerId: number) {
+        const room = await this.prismaService.chatRoom.findUnique({
+            where: { buyerId_sellerId: { buyerId, sellerId } },
+            select: { id: true },
+        });
+        return room?.id ?? null;
+    }
+
+    private getStatusTone(status: OrderStatus) {
+        const tones: Record<OrderStatus, string> = {
+            [OrderStatus.PENDING]: "info",
+            [OrderStatus.CONFIRMED]: "primary",
+            [OrderStatus.PROCESSING]: "warning",
+            [OrderStatus.SHIPPED]: "warning",
+            [OrderStatus.DELIVERED]: "success",
+            [OrderStatus.CANCELLED]: "danger",
+            [OrderStatus.REFUNDED]: "neutral",
+        };
+
+        return tones[status];
+    }
+
+    private canCancelOrder(status: OrderStatus) {
+        return status === OrderStatus.PENDING || status === OrderStatus.CONFIRMED;
+    }
+
+    private getCancellationSummary(order: any) {
+        if (order.status !== OrderStatus.CANCELLED) {
+            return null;
+        }
+
+        const actor = order.cancelled_by_actor ?? OrderCancellationActor.SYSTEM;
+        const labelMap: Record<OrderCancellationActor, string> = {
+            [OrderCancellationActor.BUYER]: "You Canceled This Order",
+            [OrderCancellationActor.SELLER]: "Seller Canceled This Order",
+            [OrderCancellationActor.ADMIN]: "Admin Canceled This Order",
+            [OrderCancellationActor.SYSTEM]: "This Order Was Canceled",
+        };
+
+        return {
+            actor,
+            message: labelMap[actor],
+            cancelled_at: order.cancelled_at,
+            cancelled_by_user_id: order.cancelled_by_user_id,
+            reason: order.cancellation_reason,
+        };
+    }
+
+    private assertReviewTextWithinWordLimit(review?: string) {
+        if (!review) {
+            return;
+        }
+
+        const wordCount = review.trim().split(/\s+/).filter(Boolean).length;
+        if (wordCount > 100) {
+            throw new BadRequestException("Review cannot be longer than 100 words");
+        }
     }
 }

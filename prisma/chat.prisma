@@ -2,6 +2,10 @@ model ChatRoom {
   id        Int      @id @default(autoincrement())
   buyerId   Int
   sellerId  Int
+  buyer_deleted_at  DateTime?
+  seller_deleted_at DateTime?
+  blocked_by_user_id Int?
+  blocked_at DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -11,6 +15,7 @@ model ChatRoom {
 
   @@index([buyerId])
   @@index([sellerId])
+  @@unique([buyerId, sellerId])
   @@map("chat_rooms")
 }
 

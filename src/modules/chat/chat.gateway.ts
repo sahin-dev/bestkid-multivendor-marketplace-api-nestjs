@@ -14,7 +14,12 @@ import { SendMessageDto } from "./dtos/send-message.dto";
 
 @WebSocketGateway({
     cors: {
-        origin: "*",
+        origin: (origin, callback) => {
+            callback(null, true);
+        },
+        credentials: true,
+        methods: ["GET", "POST"],
+        allowedHeaders: ["Content-Type", "Authorization"],
     },
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {

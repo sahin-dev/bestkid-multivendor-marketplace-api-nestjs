@@ -17,6 +17,12 @@ export class SellerController {
         return this.sellerService.getOptions(sellerId);
     }
 
+    @Get("readiness")
+    @ApiOperation({ summary: "Get seller readiness gates for product publishing" })
+    getReadiness(@GetUser("id") sellerId: number) {
+        return this.sellerService.getReadiness(sellerId);
+    }
+
     @Get("earnings")
     @ApiOperation({ summary: "Get seller earnings matrix and payment history" })
     @ApiQuery({ name: "period", required: false, enum: SellerEarningsPeriod })

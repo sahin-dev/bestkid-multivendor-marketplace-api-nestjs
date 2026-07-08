@@ -4,10 +4,12 @@ import { GetUser, Roles } from "src/common/decorators";
 import { OrderService } from "./order.service";
 import { CreateOrderDto } from "./dtos/create-order.dto";
 import { UpdateOrderStatusDto } from "./dtos/update-order-status.dto";
-import { OrderQueryDto } from "./dtos/order-query.dto";
+import { BuyerOrderTab, OrderQueryDto, SellerOrderTab } from "./dtos/order-query.dto";
 import { CheckoutDto } from "./dtos/checkout.dto";
 import { TokenPayload } from "../auth/types/TokenPayload.type";
 import { OrderStatus } from "generated/prisma/client";
+import { CancelOrderDto } from "./dtos/cancel-order.dto";
+import { CreateReviewDto } from "../product/dtos/create-review.dto";
 
 @ApiTags("Orders")
 @Controller("orders")
@@ -36,6 +38,7 @@ export class OrderController {
     @ApiQuery({ name: "page", required: false, type: Number })
     @ApiQuery({ name: "limit", required: false, type: Number })
     @ApiQuery({ name: "status", required: false, enum: OrderStatus })
+    @ApiQuery({ name: "tab", required: false, enum: BuyerOrderTab })
     async findAllUserOrders(@GetUser("id") userId: number, @Query() query: OrderQueryDto) {
         return this.orderService.findAllUserOrders(userId, query);
     }
@@ -46,6 +49,7 @@ export class OrderController {
     @ApiQuery({ name: "page", required: false, type: Number })
     @ApiQuery({ name: "limit", required: false, type: Number })
     @ApiQuery({ name: "status", required: false, enum: OrderStatus })
+    @ApiQuery({ name: "sellerTab", required: false, enum: SellerOrderTab })
     async findAllSellerOrders(@GetUser("id") sellerId: number, @Query() query: OrderQueryDto) {
         return this.orderService.findAllSellerOrders(sellerId, query);
     }
@@ -59,6 +63,16 @@ export class OrderController {
         @GetUser("id") sellerId: number,
     ) {
         return this.orderService.findSellerOrderById(orderId, sellerId);
+    }
+
+    @Post(":id/chat")
+    @ApiOperation({ summary: "Find or create the buyer/seller conversation for an order" })
+    @ApiParam({ name: "id", type: Number })
+    async findOrCreateOrderChat(
+        @Param("id", ParseIntPipe) orderId: number,
+        @GetUser("id") userId: number,
+    ) {
+        return this.orderService.findOrCreateOrderChat(orderId, userId);
     }
 
     @Get("admin/all")
@@ -85,8 +99,25 @@ export class OrderController {
     @Patch(":id/cancel")
     @ApiOperation({ summary: "Cancel one of my orders", description: "Only pending or confirmed orders can be cancelled." })
     @ApiParam({ name: "id", type: Number })
-    async cancelOrder(@Param("id", ParseIntPipe) orderId: number, @GetUser("id") userId: number) {
-        return this.orderService.cancelOrder(orderId, userId);
+    @ApiBody({ type: CancelOrderDto, required: false })
+    async cancelOrder(
+        @Param("id", ParseIntPipe) orderId: number,
+        @GetUser("id") userId: number,
+        @Body() dto: CancelOrderDto = {},
+    ) {
+        return this.orderService.cancelOrder(orderId, userId, dto.reason);
+    }
+
+    @Post("items/:orderItemId/review")
+    @ApiOperation({ summary: "Review a delivered order item", description: "Creates one review for a purchased delivered order item." })
+    @ApiParam({ name: "orderItemId", type: Number })
+    @ApiBody({ type: CreateReviewDto })
+    async reviewOrderItem(
+        @Param("orderItemId", ParseIntPipe) orderItemId: number,
+        @GetUser("id") userId: number,
+        @Body() dto: CreateReviewDto,
+    ) {
+        return this.orderService.reviewOrderItem(userId, orderItemId, dto);
     }
 
     @Patch("seller/:id/status")
