@@ -1,0 +1,227 @@
+import { applySwaggerResponseExamples } from "./response-examples";
+
+describe("applySwaggerResponseExamples", () => {
+    it("adds success and error examples that match the API response envelope", () => {
+        const document: any = {
+            paths: {
+                "/products/{id}": {
+                    get: {
+                        parameters: [{ name: "id", in: "path" }],
+                        responses: {},
+                    },
+                },
+                "/products": {
+                    get: {
+                        parameters: [{ name: "page", in: "query" }],
+                        responses: {},
+                    },
+                },
+                "/auth/login": {
+                    post: {
+                        responses: {},
+                    },
+                },
+                "/cart": {
+                    get: {
+                        responses: {},
+                    },
+                },
+                "/orders/{id}": {
+                    get: {
+                        responses: {},
+                    },
+                },
+                "/returns/{id}": {
+                    get: {
+                        responses: {},
+                    },
+                },
+                "/delivery/me": {
+                    get: {
+                        responses: {},
+                    },
+                },
+                "/chat/rooms/{id}/messages": {
+                    get: {
+                        parameters: [{ name: "page", in: "query" }],
+                        responses: {},
+                    },
+                },
+            },
+        };
+
+        applySwaggerResponseExamples(document);
+
+        const detailSuccess =
+            document.paths["/products/{id}"].get.responses["200"].content["application/json"].examples.success.value;
+        expect(detailSuccess.success).toBe(true);
+        expect(detailSuccess.statusCode).toBe(200);
+        expect(detailSuccess.message).toBe("Request successful");
+        expect(detailSuccess.data).toMatchObject({
+            id: 1,
+            name: "Kids Cotton Hoodie - Soft Fit",
+            original_price: 21.99,
+            discounted_price: 18,
+            discount_percentage: 18,
+            image_urls: ["https://cdn.bestkid.test/products/hoodie-front.png"],
+            categoryId: 1,
+            subCategoryId: 2,
+            userId: 7,
+            condition: "NEW",
+            status: "ACTIVE",
+            views: 12,
+            total_reviews: 5,
+            average_rating: 4.9,
+            is_authenticated: false,
+            authentication_status: "PENDING",
+            category: { id: 1, name: "Kids" },
+            subCategory: { id: 2, name: "Kids Sneakers", categoryId: 1 },
+            variants: [{ id: 10, productId: 1, variantName: "S", price: 18 }],
+            effective_price: 18,
+            is_wishlisted: false,
+            seller_overview: {
+                active_products: 4,
+                items_sold: 16,
+                average_rating: 4.9,
+                total_reviews: 128,
+            },
+        });
+
+        const notFound =
+            document.paths["/products/{id}"].get.responses["404"].content["application/json"].examples.error_404.value;
+        expect(notFound).toEqual({
+            success: false,
+            message: "Resource not found",
+            url: "/products/1",
+            statusCode: 404,
+        });
+
+        const paginated =
+            document.paths["/products"].get.responses["200"].content["application/json"].examples.paginated_success.value;
+        expect(paginated).toMatchObject({
+            success: true,
+            statusCode: 200,
+            message: "Request successful",
+            data: [
+                {
+                    id: 1,
+                    name: "Kids Cotton Hoodie - Soft Fit",
+                    original_price: 21.99,
+                    discounted_price: 18,
+                    category: { id: 1, name: "Kids" },
+                    subCategory: { id: 2, name: "Kids Sneakers" },
+                    variants: [{ id: 10, productId: 1, variantName: "S", price: 18 }],
+                    effective_price: 18,
+                    is_wishlisted: false,
+                },
+            ],
+            meta: {
+                total: 24,
+                page: 1,
+                limit: 10,
+                pages: 3,
+            },
+        });
+
+        const loginSuccess =
+            document.paths["/auth/login"].post.responses["200"].content["application/json"].examples.success.value;
+        expect(loginSuccess).toMatchObject({
+            success: true,
+            statusCode: 200,
+            message: "Request successful",
+        });
+        expect(typeof loginSuccess.data).toBe("string");
+        expect(document.paths["/auth/login"].post.responses["201"]).toBeUndefined();
+
+        const cartSuccess = document.paths["/cart"].get.responses["200"].content["application/json"].examples.success.value;
+        expect(cartSuccess.data).toMatchObject({
+            seller_groups: [
+                {
+                    seller: { id: 7, name: "Roberts Junior", country: "Bulgaria" },
+                    delivery: { partner: "Speedy", cost: 4.99, days_min: 2, days_max: 4, type: "domestic" },
+                    items: [
+                        {
+                            id: 14,
+                            productId: 1,
+                            variantId: 10,
+                            quantity: 1,
+                            price: 18,
+                            product: { id: 1, name: "Kids Cotton Hoodie - Soft Fit", status: "ACTIVE" },
+                            variant: { id: 10, variantName: "S", price: 18 },
+                        },
+                    ],
+                    subtotal: 18,
+                    delivery_cost: 4.99,
+                    group_total: 22.99,
+                },
+            ],
+            grand_total: 22.99,
+        });
+
+        const orderSuccess =
+            document.paths["/orders/{id}"].get.responses["200"].content["application/json"].examples.success.value;
+        expect(orderSuccess.data).toMatchObject({
+            id: 41,
+            display_id: "KDF143625879",
+            status: "PENDING",
+            delivery_address: {
+                address: "25 Ivan Vazov Street",
+                city: "Plovdiv",
+                postal_code: "4000",
+                country: "Bulgaria",
+            },
+            buyer: { id: 22, email: "buyer@example.com" },
+            seller: { id: 7, email: "seller@example.com" },
+            items: [
+                {
+                    id: 31,
+                    productId: 1,
+                    variantId: 10,
+                    line_total: 260,
+                    actions: {
+                        can_review: false,
+                        reviewed: false,
+                        can_return: false,
+                        return_requested: false,
+                    },
+                },
+            ],
+        });
+
+        const returnSuccess =
+            document.paths["/returns/{id}"].get.responses["200"].content["application/json"].examples.success.value;
+        expect(returnSuccess.data).toMatchObject({
+            id: 12,
+            status: "PENDING",
+            reason: "Damage Product",
+            images: ["https://cdn.bestkid.test/returns/evidence-1.png"],
+            chat_room_id: 11,
+            order: { id: 41, display_id: "KDF143625879", status: "DELIVERED" },
+            returned_item: { id: 31, productId: 1 },
+            actions: {
+                can_message_seller: true,
+                can_update_status: false,
+            },
+        });
+
+        const deliverySuccess =
+            document.paths["/delivery/me"].get.responses["200"].content["application/json"].examples.success.value;
+        expect(deliverySuccess.data).toEqual({
+            data: expect.objectContaining({
+                id: 3,
+                sellerId: 7,
+                domestic_partner: "Speedy",
+                international_partner: "DHL Express",
+            }),
+        });
+
+        const messagesSuccess =
+            document.paths["/chat/rooms/{id}/messages"].get.responses["200"].content["application/json"].examples
+                .paginated_success.value;
+        expect(messagesSuccess.data).toMatchObject({
+            room: { id: 11, messaging_available: true },
+            data: [{ id: 19, chatRoomId: 11, senderId: 22, type: "TEXT" }],
+            meta: { total: 1, page: 1, limit: 20, pages: 1 },
+        });
+    });
+});

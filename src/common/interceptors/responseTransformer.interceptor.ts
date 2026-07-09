@@ -16,7 +16,10 @@ export class ResponseTransformerInterceptor<T> implements NestInterceptor<T, Api
 
     intercept(context: ExecutionContext, next: CallHandler<any>): Observable<ApiResponse<T>> | Promise<Observable<ApiResponse<T>>> {
 
-        const apiResponseMessage = this.reflector.getAllAndOverride(ApiResponseMessageKey, [context.getClass(), context.getHandler()])
+        const apiResponseMessage = this.reflector.getAllAndOverride<string>(
+            ApiResponseMessageKey,
+            [context.getClass(), context.getHandler()],
+        ) ?? "Request successful"
 
         return next.handle().pipe(
             map(data => {

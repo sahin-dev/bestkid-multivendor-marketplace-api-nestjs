@@ -5,6 +5,8 @@ import { join } from 'path';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
 import { ResponseTransformerInterceptor } from './common/interceptors/responseTransformer.interceptor';
+import { GlobalHttpExceptionHandler } from './common/exceptions/GlobalHttpExceptionHandler';
+import { applySwaggerResponseExamples } from './common/swagger/response-examples';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -54,6 +56,7 @@ async function bootstrap() {
 
   const reflector = app.get(Reflector)
 
+  app.useGlobalFilters(new GlobalHttpExceptionHandler())
   app.useGlobalInterceptors(new ResponseTransformerInterceptor(reflector))
 
 
@@ -91,7 +94,11 @@ async function bootstrap() {
       'access-token',) // name for the auth scheme
     .build();
 
-  const documentFactory = () => SwaggerModule.createDocument(app, config);
+  const documentFactory = () => {
+    const document = SwaggerModule.createDocument(app, config);
+    applySwaggerResponseExamples(document);
+    return document;
+  };
   SwaggerModule.setup('docs', app, documentFactory);
 
   await app.listen(process.env.PORT ?? 3000);
