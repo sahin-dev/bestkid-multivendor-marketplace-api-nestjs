@@ -17,7 +17,7 @@ async function bootstrap() {
     .filter(Boolean);
 
   app.enableCors({
-    origin: ["http://localhost:2005"], // Allow all origins
+    origin: "*", // Allow all origins
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
@@ -49,7 +49,7 @@ async function bootstrap() {
   const config = new DocumentBuilder()
     .setTitle('BestKid Api')
     .setDescription('Backend API for the BestKid multivendor marketplace. Use the Bearer auth control with a JWT returned from /auth/login or /auth/admin/login for protected endpoints.')
-    // .addServer(process.env.SWAGGER_SERVER_URL!)
+    .addServer(process.env.SWAGGER_SERVER_URL!)
     .setVersion('1.0')
     .addTag('Auth', 'Registration, login, OTP verification, and password reset flows')
     .addTag('Admin Dashboard', 'Admin dashboard cards, activity, and platform earnings')
