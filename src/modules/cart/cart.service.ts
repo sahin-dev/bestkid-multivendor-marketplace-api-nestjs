@@ -8,6 +8,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AddToCartDto } from "./dtos/add-to-cart.dto";
 import { UpdateCartItemDto } from "./dtos/update-cart-item.dto";
 import { DeliveryService } from "../delivery/delivery.service";
+import { assertEntityExists } from "src/common/validators/entity-exists.validator";
 
 @Injectable()
 export class CartService {
@@ -20,6 +21,7 @@ export class CartService {
     private async getOrCreateCart(userId: number) {
         const existing = await this.prismaService.cart.findUnique({ where: { userId } });
         if (existing) return existing;
+        await assertEntityExists(this.prismaService.baseUser, "User", userId);
         return this.prismaService.cart.create({ data: { userId } });
     }
 
@@ -30,7 +32,7 @@ export class CartService {
             where: { id: dto.productId },
             include: { user: { select: { stripe_onboarding_complete: true } } },
         });
-        if (!product) throw new NotFoundException("Product not found");
+        if (!product) throw new NotFoundException(`Product with ID ${dto.productId} not found`);
         if (product.status !== "ACTIVE") throw new BadRequestException("Product is not available");
         if (!product.user.stripe_onboarding_complete) {
             throw new ForbiddenException("This seller has not completed payment setup.");
@@ -40,7 +42,10 @@ export class CartService {
         const variant = await this.prismaService.productVariant.findFirst({
             where: { id: dto.variantId, productId: dto.productId },
         });
-        if (!variant) throw new NotFoundException("Product variant not found for this product");
+        if (!variant) {
+            await assertEntityExists(this.prismaService.productVariant, "Product variant", dto.variantId);
+            throw new NotFoundException(`Product variant with ID ${dto.variantId} not found for Product with ID ${dto.productId}`);
+        }
 
         const cart = await this.getOrCreateCart(userId);
 

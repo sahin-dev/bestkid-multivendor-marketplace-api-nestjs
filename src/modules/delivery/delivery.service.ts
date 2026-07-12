@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
+import { assertEntityExists } from "src/common/validators/entity-exists.validator";
 import {
     UpsertDeliveryDto,
     UpsertDomesticDeliveryDto,
@@ -11,6 +12,8 @@ export class DeliveryService {
     constructor(private readonly prismaService: PrismaService) {}
 
     async upsertDeliveryOptions(sellerId: number, dto: UpsertDeliveryDto) {
+        await assertEntityExists(this.prismaService.baseUser, "Seller", sellerId);
+
         return this.prismaService.sellerDeliveryOption.upsert({
             where: { sellerId },
             update: { ...dto },
@@ -19,6 +22,8 @@ export class DeliveryService {
     }
 
     async upsertDomesticDeliveryOptions(sellerId: number, dto: UpsertDomesticDeliveryDto) {
+        await assertEntityExists(this.prismaService.baseUser, "Seller", sellerId);
+
         return this.prismaService.sellerDeliveryOption.upsert({
             where: { sellerId },
             update: { ...dto },
@@ -27,6 +32,8 @@ export class DeliveryService {
     }
 
     async upsertInternationalDeliveryOptions(sellerId: number, dto: UpsertInternationalDeliveryDto) {
+        await assertEntityExists(this.prismaService.baseUser, "Seller", sellerId);
+
         return this.prismaService.sellerDeliveryOption.upsert({
             where: { sellerId },
             update: { ...dto },
@@ -39,6 +46,7 @@ export class DeliveryService {
             where: { sellerId },
         });
         if (!option) {
+            await assertEntityExists(this.prismaService.baseUser, "Seller", sellerId);
             return { message: "No delivery options set yet.", data: null };
         }
         return { data: option };
@@ -49,6 +57,7 @@ export class DeliveryService {
             where: { sellerId },
         });
         if (!option) {
+            await assertEntityExists(this.prismaService.baseUser, "Seller", sellerId);
             throw new NotFoundException(`Seller with ID ${sellerId} has not set delivery options.`);
         }
         return { data: option };

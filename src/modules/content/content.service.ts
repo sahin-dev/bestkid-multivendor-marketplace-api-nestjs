@@ -10,6 +10,7 @@ import { CreateContactRequestDto } from "./dtos/create-contact-request.dto";
 import { ReplyContactRequestDto } from "./dtos/reply-contact-request.dto";
 import { LegalDocumentType, ContactStatus } from "generated/prisma/client";
 import { ContactRequestQueryDto, toContactStatus } from "./dtos/contact-request-query.dto";
+import { assertEntityExists } from "src/common/validators/entity-exists.validator";
 
 @Injectable()
 export class ContentService {
@@ -57,10 +58,8 @@ export class ContentService {
     }
 
     async createFaq(dto: CreateFaqDto) {
-        const category = await this.prismaService.faqCategory.findUnique({ where: { id: dto.categoryId } });
-        if (!category) {
-            throw new NotFoundException(`FAQ category with ID ${dto.categoryId} not found`);
-        }
+        await assertEntityExists(this.prismaService.faqCategory, "FAQ category", dto.categoryId);
+
         return this.prismaService.faq.create({
             data: { categoryId: dto.categoryId, question: dto.question, answer: dto.answer },
             include: { category: true },
@@ -72,6 +71,10 @@ export class ContentService {
         if (!faq) {
             throw new NotFoundException(`FAQ with ID ${id} not found`);
         }
+        if (dto.categoryId !== undefined) {
+            await assertEntityExists(this.prismaService.faqCategory, "FAQ category", dto.categoryId);
+        }
+
         return this.prismaService.faq.update({
             where: { id },
             data: { ...dto },

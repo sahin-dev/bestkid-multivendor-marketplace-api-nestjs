@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { Type } from "class-transformer";
 import { IsBoolean, IsDateString, IsEnum, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from "class-validator";
-import { CouponDiscountType, CouponUsageType } from "generated/prisma/client";
+import { CouponDiscountType, CouponUsageType } from "generated/prisma/enums";
 
 export class CreateCouponDto {
     @IsString()

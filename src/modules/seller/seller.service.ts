@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, NotFoundException } from "@nestjs/common";
 import { OrderStatus } from "generated/prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { SellerEarningsPeriod, SellerEarningsQueryDto } from "./dtos/seller-earnings-query.dto";
@@ -46,13 +46,16 @@ export class SellerService {
                 delivery_option: true,
             },
         });
+        if (!seller) {
+            throw new NotFoundException(`Seller with ID ${sellerId} not found`);
+        }
 
-        const deliveryConfigured = this.isDeliveryConfigured(seller?.delivery_option);
-        const stripeConnected = Boolean(seller?.stripe_onboarding_complete);
+        const deliveryConfigured = this.isDeliveryConfigured(seller.delivery_option);
+        const stripeConnected = Boolean(seller.stripe_onboarding_complete);
 
         return {
             stripe_connected: stripeConnected,
-            stripe_account_id: seller?.stripe_account_id ?? null,
+            stripe_account_id: seller.stripe_account_id ?? null,
             delivery_configured: deliveryConfigured,
             can_create_product: stripeConnected,
             can_publish_product: stripeConnected && deliveryConfigured,

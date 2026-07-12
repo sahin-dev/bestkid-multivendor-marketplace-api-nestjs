@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from "@nestjs/swagger";
 import { Type } from "class-transformer";
 import { IsEnum, IsInt, IsOptional, IsString, Min } from "class-validator";
-import { CouponDiscountType, CouponUsageType } from "generated/prisma/client";
+import { CouponDiscountType, CouponUsageType } from "generated/prisma/enums";
 
 export enum CouponStatusFilter {
     ALL = "ALL",

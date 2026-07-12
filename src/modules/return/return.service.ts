@@ -6,6 +6,7 @@ import { OrderStatus, ReturnStatus, NotificationType } from "generated/prisma/cl
 import { NotificationService } from "../notification/notification.service";
 import { UpdateReturnStatusDto } from "./dtos/update-return-status.dto";
 import { ChatService } from "../chat/chat.service";
+import { assertEntityExists } from "src/common/validators/entity-exists.validator";
 
 @Injectable()
 export class ReturnService {
@@ -16,6 +17,8 @@ export class ReturnService {
     ) {}
 
     async createReturn(userId: number, dto: CreateReturnDto) {
+        await assertEntityExists(this.prismaService.baseUser, "User", userId);
+
         // Find the order item and its parent order
         const orderItem = await this.prismaService.orderItem.findUnique({
             where: { id: dto.orderItemId },

@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { SendMessageDto } from "./dtos/send-message.dto";
 import { MessagesQueryDto } from "./dtos/messages-query.dto";
 import { ChatRoomsQueryDto } from "./dtos/chat-rooms-query.dto";
+import { assertEntityExists } from "src/common/validators/entity-exists.validator";
 
 @Injectable()
 export class ChatService {
@@ -14,12 +15,14 @@ export class ChatService {
             throw new BadRequestException("You cannot start a chat with yourself");
         }
 
+        await assertEntityExists(this.prismaService.baseUser, "Buyer", buyerId);
+
         // Verify seller exists and is indeed a seller or admin
         const seller = await this.prismaService.baseUser.findUnique({
             where: { id: sellerId },
         });
         if (!seller) {
-            throw new NotFoundException("Seller user not found");
+            throw new NotFoundException(`Seller with ID ${sellerId} not found`);
         }
 
         const existing = await this.prismaService.chatRoom.findUnique({

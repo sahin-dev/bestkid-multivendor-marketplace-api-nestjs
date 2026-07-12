@@ -8,6 +8,7 @@ import { ProductQueryDto, ProductSort } from "./dtos/product-query.dto";
 import { AuthenticationStatus, OrderStatus, ProductStatus } from "generated/prisma/client";
 import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { AdminProductApprovalFilter, AdminProductQueryDto } from "./dtos/admin-product-query.dto";
+import { assertEntityExists } from "src/common/validators/entity-exists.validator";
 
 @Injectable()
 export class ProductService {
@@ -465,6 +466,7 @@ export class ProductService {
     }
 
     async createReview(productId: number, userId: number, dto: CreateReviewDto) {
+        await assertEntityExists(this.prismaService.baseUser, "User", userId);
         await this.findProductById(productId);
         this.assertReviewTextWithinWordLimit(dto.review);
 
@@ -797,11 +799,12 @@ export class ProductService {
             throw new NotFoundException(`Category with ID ${categoryId} not found`);
         }
 
-        const subCategory = await this.prismaService.subCategory.findFirst({
-            where: { id: subCategoryId, categoryId },
-        });
+        const subCategory = await this.prismaService.subCategory.findUnique({ where: { id: subCategoryId } });
         if (!subCategory) {
-            throw new NotFoundException(`SubCategory with ID ${subCategoryId} not found under Category ${categoryId}`);
+            throw new NotFoundException(`Sub-category with ID ${subCategoryId} not found`);
+        }
+        if (subCategory.categoryId !== categoryId) {
+            throw new BadRequestException(`Sub-category with ID ${subCategoryId} does not belong to Category with ID ${categoryId}`);
         }
     }
 

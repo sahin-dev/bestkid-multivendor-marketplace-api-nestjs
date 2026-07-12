@@ -294,6 +294,8 @@ export class AccountService {
         userId: number,
         data: { language_preference?: LanguagePreference; currency_preference?: CurrencyPreference },
     ) {
+        await this.ensureUserExists(userId);
+
         return this.prismaService.baseUser.update({
             where: { id: userId },
             data,

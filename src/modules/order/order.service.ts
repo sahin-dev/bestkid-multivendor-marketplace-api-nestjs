@@ -8,6 +8,7 @@ import { OrderCancellationActor, OrderStatus, NotificationType } from "generated
 import { NotificationService } from "../notification/notification.service";
 import { CreateReviewDto } from "../product/dtos/create-review.dto";
 import { ChatService } from "../chat/chat.service";
+import { assertEntityExists } from "src/common/validators/entity-exists.validator";
 
 @Injectable()
 export class OrderService {
@@ -22,6 +23,7 @@ export class OrderService {
         if (!dto.items || dto.items.length === 0) {
             throw new BadRequestException("Order must contain at least one item");
         }
+        await assertEntityExists(this.prismaService.baseUser, "User", userId);
 
         // Fetch all product IDs from DB to verify and get prices
         const productIds = dto.items.map((i) => i.productId);
@@ -396,6 +398,7 @@ export class OrderService {
     }
 
     async reviewOrderItem(userId: number, orderItemId: number, dto: CreateReviewDto) {
+        await assertEntityExists(this.prismaService.baseUser, "User", userId);
         this.assertReviewTextWithinWordLimit(dto.review);
 
         const orderItem = await this.prismaService.orderItem.findUnique({

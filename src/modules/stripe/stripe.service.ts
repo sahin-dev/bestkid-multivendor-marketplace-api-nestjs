@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import type { ConfigType } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import stripeConfig, { StripeConfig } from "src/config/stripe.config";
@@ -27,7 +27,7 @@ export class StripeService {
             include: { profile: true },
         });
 
-        if (!user) throw new BadRequestException("User not found");
+        if (!user) throw new NotFoundException(`User with ID ${userId} not found`);
 
         let accountId = user.stripe_account_id;
 
@@ -61,7 +61,10 @@ export class StripeService {
      */
     async handleCallback(userId: number) {
         const user = await this.prismaService.baseUser.findUnique({ where: { id: userId } });
-        if (!user || !user.stripe_account_id) {
+        if (!user) {
+            throw new NotFoundException(`User with ID ${userId} not found`);
+        }
+        if (!user.stripe_account_id) {
             throw new BadRequestException("No Stripe account linked.");
         }
 
@@ -88,9 +91,12 @@ export class StripeService {
             where: { id: userId },
             select: { stripe_account_id: true, stripe_onboarding_complete: true },
         });
+        if (!user) {
+            throw new NotFoundException(`User with ID ${userId} not found`);
+        }
         return {
-            stripe_account_id: user?.stripe_account_id ?? null,
-            stripe_onboarding_complete: user?.stripe_onboarding_complete ?? false,
+            stripe_account_id: user.stripe_account_id ?? null,
+            stripe_onboarding_complete: user.stripe_onboarding_complete ?? false,
         };
     }
 

@@ -5,6 +5,7 @@ import { CreateCategoryDto } from "./dtos/create-category.dto";
 import { UpdateCategoryDto } from "./dtos/update-category.dto";
 import { CreateSubCategoryDto } from "./dtos/create-subcategory.dto";
 import { UpdateSubCategoryDto } from "./dtos/update-subcategory.dto";
+import { assertEntityExists } from "src/common/validators/entity-exists.validator";
 
 @Injectable()
 export class CategoryService {
@@ -137,6 +138,8 @@ export class CategoryService {
     }
 
     async updateSubCategory(categoryId: number, subCategoryId: number, dto: UpdateSubCategoryDto) {
+        await assertEntityExists(this.prismaService.category, "Category", categoryId);
+
         const subCategory = await this.prismaService.subCategory.findFirst({
             where: { id: subCategoryId, categoryId },
         });
@@ -151,6 +154,8 @@ export class CategoryService {
     }
 
     async deleteSubCategory(categoryId: number, subCategoryId: number) {
+        await assertEntityExists(this.prismaService.category, "Category", categoryId);
+
         const subCategory = await this.prismaService.subCategory.findFirst({
             where: { id: subCategoryId, categoryId },
         });

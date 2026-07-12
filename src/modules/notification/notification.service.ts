@@ -2,12 +2,15 @@ import { Injectable, NotFoundException, ForbiddenException } from "@nestjs/commo
 import { PrismaService } from "../prisma/prisma.service";
 import { NotificationQueryDto } from "./dtos/notification-query.dto";
 import { NotificationType } from "generated/prisma/client";
+import { assertEntityExists } from "src/common/validators/entity-exists.validator";
 
 @Injectable()
 export class NotificationService {
     constructor(private readonly prismaService: PrismaService) {}
 
     async create(userId: number, title: string, message: string, type: NotificationType) {
+        await assertEntityExists(this.prismaService.baseUser, "User", userId);
+
         return this.prismaService.notification.create({
             data: {
                 userId,

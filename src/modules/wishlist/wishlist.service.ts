@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { PrismaService } from "../prisma/prisma.service";
+import { assertEntityExists } from "src/common/validators/entity-exists.validator";
 
 @Injectable()
 export class WishlistService {
@@ -52,13 +53,15 @@ export class WishlistService {
     }
 
     async add(userId: number, productId: number) {
+        await assertEntityExists(this.prismaService.baseUser, "User", userId);
+
         const product = await this.prismaService.product.findUnique({
             where: { id: productId },
             select: { id: true, status: true },
         });
 
         if (!product) {
-            throw new NotFoundException("Product not found");
+            throw new NotFoundException(`Product with ID ${productId} not found`);
         }
 
         if (product.status !== "ACTIVE") {

@@ -1,8 +1,9 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
-import { CouponDiscountType, CouponUsageType } from "generated/prisma/client";
+import { CouponDiscountType, CouponUsageType } from "generated/prisma/enums";
 import { PrismaService } from "../prisma/prisma.service";
-import { CouponQueryDto, CouponStatusFilter } from "./dtos/coupon-query.dto";
-import { CreateCouponDto, UpdateCouponDto } from "./dtos/upsert-coupon.dto";
+import { CouponStatusFilter } from "./dtos/coupon-query.dto";
+import type { CouponQueryDto } from "./dtos/coupon-query.dto";
+import type { CreateCouponDto, UpdateCouponDto } from "./dtos/upsert-coupon.dto";
 
 @Injectable()
 export class CouponService {
@@ -153,6 +154,8 @@ export class CouponService {
             usage_type: CouponUsageType;
             usage_limit: number | null;
             discount_type: CouponDiscountType;
+            categoryId?: number | null;
+            subCategoryId?: number | null;
         },
     ) {
         const discountType = dto.discount_type ?? existing?.discount_type;
@@ -163,7 +166,7 @@ export class CouponService {
         }
 
         const usageType = dto.usage_type ?? existing?.usage_type ?? CouponUsageType.UNLIMITED;
-        const usageLimit = dto.usage_limit ?? existing?.usage_limit;
+        const usageLimit = usageType === CouponUsageType.UNLIMITED ? null : (dto.usage_limit ?? existing?.usage_limit);
         if (usageType === CouponUsageType.LIMITED && !usageLimit) {
             throw new BadRequestException("usage_limit is required when usage_type is LIMITED");
         }
@@ -174,17 +177,23 @@ export class CouponService {
             throw new BadRequestException("start_date must be before end_date");
         }
 
-        if (dto.categoryId) {
-            const category = await this.prismaService.category.findUnique({ where: { id: dto.categoryId } });
+        const categoryId = dto.categoryId ?? existing?.categoryId;
+        const subCategoryId = dto.subCategoryId ?? existing?.subCategoryId;
+
+        if (categoryId) {
+            const category = await this.prismaService.category.findUnique({ where: { id: categoryId } });
             if (!category) {
-                throw new NotFoundException(`Category with ID ${dto.categoryId} not found`);
+                throw new NotFoundException(`Category with ID ${categoryId} not found`);
             }
         }
 
-        if (dto.subCategoryId) {
-            const subCategory = await this.prismaService.subCategory.findUnique({ where: { id: dto.subCategoryId } });
+        if (subCategoryId) {
+            const subCategory = await this.prismaService.subCategory.findUnique({ where: { id: subCategoryId } });
             if (!subCategory) {
-                throw new NotFoundException(`Sub-category with ID ${dto.subCategoryId} not found`);
+                throw new NotFoundException(`Sub-category with ID ${subCategoryId} not found`);
+            }
+            if (categoryId && subCategory.categoryId !== categoryId) {
+                throw new BadRequestException(`Sub-category with ID ${subCategoryId} does not belong to Category with ID ${categoryId}`);
             }
         }
     }
@@ -198,13 +207,16 @@ export class CouponService {
         if (dto.subCategoryId !== undefined) data.subCategoryId = dto.subCategoryId;
         if (dto.discount_type !== undefined) data.discount_type = dto.discount_type;
         if (dto.discount_value !== undefined) data.discount_value = dto.discount_value;
-        if (dto.usage_type !== undefined) {
+        const usageType = dto.usage_type;
+        if (usageType !== undefined) {
             data.usage_type = dto.usage_type;
-            if (dto.usage_type === CouponUsageType.UNLIMITED) {
+            if (usageType === CouponUsageType.UNLIMITED) {
                 data.usage_limit = null;
             }
         }
-        if (dto.usage_limit !== undefined) data.usage_limit = dto.usage_limit;
+        if (dto.usage_limit !== undefined && usageType !== CouponUsageType.UNLIMITED) {
+            data.usage_limit = dto.usage_limit;
+        }
         if (dto.start_date !== undefined) data.start_date = new Date(dto.start_date);
         if (dto.end_date !== undefined) data.end_date = new Date(dto.end_date);
         if (dto.is_active !== undefined) data.is_active = dto.is_active;
