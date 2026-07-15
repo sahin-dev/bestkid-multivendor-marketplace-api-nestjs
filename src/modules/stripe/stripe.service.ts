@@ -3,6 +3,8 @@ import type { ConfigType } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import stripeConfig, { StripeConfig } from "src/config/stripe.config";
 import Stripe from "stripe";
+import { OrderService } from "../order/order.service";
+import { CreateStripeCheckoutSessionDto } from "../order/dtos/checkout-flow.dto";
 
 @Injectable()
 export class StripeService {
@@ -11,6 +13,7 @@ export class StripeService {
 
     constructor(
         private readonly prismaService: PrismaService,
+        private readonly orderService: OrderService,
         @Inject(stripeConfig.KEY) private readonly stripeConfiguration: ConfigType<typeof StripeConfig>,
     ) {
         this.stripe = new Stripe(this.stripeConfiguration.stripe_key!, {
@@ -54,6 +57,69 @@ export class StripeService {
         });
 
         return { url: accountLink.url, stripe_account_id: accountId };
+    }
+
+    async createCheckoutSession(userId: number, dto: CreateStripeCheckoutSessionDto) {
+        if (!dto.acceptedTerms) {
+            throw new BadRequestException("You must agree to the Terms & Conditions and Privacy Policy before payment.");
+        }
+
+        const user = await this.prismaService.baseUser.findUnique({
+            where: { id: userId },
+            select: { email: true },
+        });
+        if (!user) {
+            throw new NotFoundException(`User with ID ${userId} not found`);
+        }
+
+        const checkoutSummary = await this.orderService.getCheckoutSummary(userId, {
+            sellerIds: dto.sellerIds,
+            addressId: dto.addressId,
+            couponCode: dto.couponCode,
+        });
+        const amountTotal = checkoutSummary.price_details.total;
+        const amountInCents = Math.round(amountTotal * 100);
+
+        if (amountInCents <= 0) {
+            throw new BadRequestException("Checkout total must be greater than zero.");
+        }
+
+        const session = await this.stripe.checkout.sessions.create({
+            mode: "payment",
+            payment_method_types: ["card"],
+            success_url: dto.successUrl,
+            cancel_url: dto.cancelUrl,
+            customer_email: user.email,
+            client_reference_id: String(userId),
+            line_items: [
+                {
+                    price_data: {
+                        currency: "eur",
+                        product_data: {
+                            name: "BestKid checkout order",
+                            description: `${checkoutSummary.cart_item_count} item(s) from ${checkoutSummary.seller_groups.length} seller(s)`,
+                        },
+                        unit_amount: amountInCents,
+                    },
+                    quantity: 1,
+                },
+            ],
+            metadata: {
+                userId: String(userId),
+                addressId: String(dto.addressId),
+                sellerIds: dto.sellerIds?.join(",") ?? "",
+                couponCode: dto.couponCode ?? "",
+                total: String(amountTotal),
+            },
+        });
+
+        return {
+            session_id: session.id,
+            url: session.url,
+            currency: "eur",
+            amount_total: amountTotal,
+            checkout_summary: checkoutSummary,
+        };
     }
 
     /**
@@ -126,7 +192,45 @@ export class StripeService {
             }
         }
 
+        if (event.type === "checkout.session.completed") {
+            await this.handleCheckoutSessionCompleted(event.data.object as Stripe.Checkout.Session);
+        }
+
         return { received: true };
+    }
+
+    private async handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
+        const userId = Number(session.metadata?.userId);
+        const addressId = Number(session.metadata?.addressId);
+        const sellerIds = session.metadata?.sellerIds
+            ? session.metadata.sellerIds
+                  .split(",")
+                  .map((sellerId) => Number(sellerId.trim()))
+                  .filter((sellerId) => Number.isInteger(sellerId) && sellerId > 0)
+            : undefined;
+        const couponCode = session.metadata?.couponCode || undefined;
+
+        if (!userId || !addressId) {
+            this.logger.warn(`Skipping checkout.session.completed ${session.id}: missing userId or addressId metadata.`);
+            return;
+        }
+
+        try {
+            await this.orderService.checkoutFromCart(userId, {
+                sellerIds,
+                addressId,
+                couponCode,
+                acceptedTerms: true,
+            });
+            this.logger.log(`Created orders for paid checkout session ${session.id}.`);
+        } catch (err) {
+            if (err?.message === "Cart is empty") {
+                this.logger.warn(`Checkout session ${session.id} was already processed or cart is empty.`);
+                return;
+            }
+            this.logger.error(`Failed to create orders for checkout session ${session.id}`, err?.stack ?? err);
+            throw err;
+        }
     }
 
     /**

@@ -3,8 +3,9 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CreateOrderDto } from "./dtos/create-order.dto";
 import { BuyerOrderTab, OrderQueryDto, SellerOrderTab } from "./dtos/order-query.dto";
 import { CheckoutDto } from "./dtos/checkout.dto";
+import { ApplyCouponDto, CheckoutSummaryQueryDto } from "./dtos/checkout-flow.dto";
 import { DeliveryService } from "../delivery/delivery.service";
-import { OrderCancellationActor, OrderStatus, NotificationType } from "generated/prisma/client";
+import { CouponDiscountType, CouponUsageType, OrderCancellationActor, OrderStatus, NotificationType } from "generated/prisma/client";
 import { NotificationService } from "../notification/notification.service";
 import { CreateReviewDto } from "../product/dtos/create-review.dto";
 import { ChatService } from "../chat/chat.service";
@@ -89,97 +90,58 @@ export class OrderService {
         });
     }
 
+    async getCheckoutSummary(userId: number, dto: CheckoutSummaryQueryDto = {}) {
+        const { cart_id, ...summary } = await this.buildCheckoutSummary(userId, dto);
+        return summary;
+    }
+
+    async applyCoupon(userId: number, dto: ApplyCouponDto) {
+        const { cart_id, ...summary } = await this.buildCheckoutSummary(userId, dto);
+        return {
+            valid: true,
+            message: summary.coupon?.message ?? "Coupon applied successfully.",
+            coupon: summary.coupon,
+            price_details: summary.price_details,
+        };
+    }
+
     async checkoutFromCart(userId: number, dto: CheckoutDto) {
-        // 1. Fetch user's cart with items, products, seller details, delivery option, and variant
-        const cart = await this.prismaService.cart.findUnique({
-            where: { userId },
-            include: {
-                cartItems: {
-                    include: {
-                        product: {
-                            include: {
-                                user: {
-                                    select: {
-                                        id: true,
-                                        profile: { select: { country: true } },
-                                        delivery_option: true,
-                                        stripe_onboarding_complete: true,
-                                    },
-                                },
-                            },
-                        },
-                        variant: true,
-                    },
-                },
-            },
+        if (dto.acceptedTerms === false) {
+            throw new BadRequestException("You must agree to the Terms & Conditions and Privacy Policy before checkout.");
+        }
+
+        const checkoutAddress = await this.resolveCheckoutAddress(userId, dto);
+        const summary = await this.buildCheckoutSummary(userId, {
+            sellerIds: dto.sellerIds,
+            addressId: dto.addressId,
+            country: checkoutAddress.country ?? undefined,
+            couponCode: dto.couponCode,
         });
-
-        if (!cart || cart.cartItems.length === 0) {
-            throw new BadRequestException("Cart is empty");
-        }
-
-        // 2. Validate items are ACTIVE and sellers have completed Stripe onboarding
-        for (const item of cart.cartItems) {
-            if (item.product.status !== "ACTIVE") {
-                throw new BadRequestException(`Product ${item.product.name} is not active`);
-            }
-            if (!item.product.user.stripe_onboarding_complete) {
-                throw new ForbiddenException(`Seller of product ${item.product.name} has not completed payment setup.`);
-            }
-        }
-
-        // 3. Group by seller
-        const sellerGroups = new Map<number, typeof cart.cartItems>();
-        for (const item of cart.cartItems) {
-            const sellerId = item.product.userId;
-            if (!sellerGroups.has(sellerId)) {
-                sellerGroups.set(sellerId, []);
-            }
-            sellerGroups.get(sellerId)!.push(item);
-        }
 
         const createdOrders: any[] = [];
 
-        // 4. Create orders in a transaction
         await this.prismaService.$transaction(async (tx) => {
-            for (const [sellerId, items] of sellerGroups) {
-                const seller = items[0].product.user;
-                const sellerCountry = seller.profile?.country ?? null;
-
-                // Resolve delivery
-                const delivery = this.deliveryService.resolveDelivery(
-                    seller.delivery_option,
-                    dto.country,
-                    sellerCountry,
-                );
-
-                const subtotal = items.reduce((sum, item) => {
-                    const price = item.product.discounted_price ?? item.product.original_price;
-                    return sum + price * item.quantity;
-                }, 0);
-
-                const total = subtotal + delivery.cost;
-
+            for (const group of summary.seller_groups) {
                 const order = await tx.order.create({
                     data: {
                         userId,
-                        sellerId,
+                        sellerId: group.seller.id,
                         status: OrderStatus.PENDING,
-                        total,
-                        delivery_partner: delivery.partner,
-                        delivery_cost: delivery.cost,
-                        delivery_days_min: delivery.days_min,
-                        delivery_days_max: delivery.days_max,
-                        shippingAddress: dto.shippingAddress,
-                        city: dto.city,
-                        postalCode: dto.postalCode,
-                        country: dto.country,
+                        total: group.total,
+                        delivery_partner: group.delivery.partner,
+                        delivery_cost: group.delivery.cost,
+                        delivery_days_min: group.delivery.days_min,
+                        delivery_days_max: group.delivery.days_max,
+                        shippingAddress: checkoutAddress.shippingAddress,
+                        city: checkoutAddress.city,
+                        postalCode: checkoutAddress.postalCode,
+                        country: checkoutAddress.country,
                         items: {
-                            create: items.map((item) => ({
+                            create: group.items.map((item) => ({
                                 productId: item.productId,
                                 variantId: item.variantId,
                                 quantity: item.quantity,
-                                price: item.product.discounted_price ?? item.product.original_price,
+                                price: item.price,
                             })),
                         },
                     },
@@ -191,9 +153,16 @@ export class OrderService {
                 createdOrders.push(order);
             }
 
-            // 5. Clear the cart
+            if (summary.coupon) {
+                await tx.coupon.update({
+                    where: { id: summary.coupon.id },
+                    data: { used_count: { increment: 1 } },
+                });
+            }
+
+            const checkedOutCartItemIds = summary.seller_groups.flatMap((group) => group.items.map((item) => item.id));
             await tx.cartItem.deleteMany({
-                where: { cartId: cart.id },
+                where: { cartId: summary.cart_id, id: { in: checkedOutCartItemIds } },
             });
         });
 
@@ -597,6 +566,300 @@ export class OrderService {
         }
 
         return updated;
+    }
+
+    private async buildCheckoutSummary(
+        userId: number,
+        dto: { sellerIds?: number[]; addressId?: number; country?: string; couponCode?: string } = {},
+    ) {
+        const user = await this.prismaService.baseUser.findUnique({
+            where: { id: userId },
+            include: {
+                profile: { select: { country: true } },
+                addresses: { orderBy: [{ is_default: "desc" }, { createdAt: "desc" }] },
+            },
+        });
+
+        if (!user) {
+            throw new NotFoundException("User not found");
+        }
+
+        const selectedAddress = dto.addressId
+            ? user.addresses.find((address) => address.id === dto.addressId)
+            : user.addresses.find((address) => address.is_default) ?? user.addresses[0] ?? null;
+
+        if (dto.addressId && !selectedAddress) {
+            throw new NotFoundException("Address not found");
+        }
+
+        const buyerCountry = selectedAddress?.country ?? dto.country ?? user.profile?.country ?? null;
+
+        const cart = await this.prismaService.cart.findUnique({
+            where: { userId },
+            include: {
+                cartItems: {
+                    include: {
+                        product: {
+                            include: {
+                                user: {
+                                    select: {
+                                        id: true,
+                                        email: true,
+                                        profile: { select: { full_name: true, avatar_url: true, country: true } },
+                                        delivery_option: true,
+                                        stripe_onboarding_complete: true,
+                                    },
+                                },
+                            },
+                        },
+                        variant: true,
+                    },
+                },
+            },
+        });
+
+        if (!cart || cart.cartItems.length === 0) {
+            throw new BadRequestException("Cart is empty");
+        }
+
+        const selectedSellerIds = this.normalizeSellerIds(dto.sellerIds);
+        const checkoutItems = selectedSellerIds.length
+            ? cart.cartItems.filter((item) => selectedSellerIds.includes(item.product.userId))
+            : cart.cartItems;
+
+        if (checkoutItems.length === 0) {
+            throw new BadRequestException("No cart items found for the selected seller.");
+        }
+
+        for (const item of checkoutItems) {
+            if (item.product.status !== "ACTIVE") {
+                throw new BadRequestException(`Product ${item.product.name} is not active`);
+            }
+            if (!item.product.user.stripe_onboarding_complete) {
+                throw new ForbiddenException(`Seller of product ${item.product.name} has not completed payment setup.`);
+            }
+        }
+
+        const coupon = dto.couponCode
+            ? await this.validateCouponForCart(dto.couponCode, checkoutItems)
+            : null;
+
+        const sellerMap = new Map<number, typeof checkoutItems>();
+        for (const item of checkoutItems) {
+            const sellerId = item.product.userId;
+            if (!sellerMap.has(sellerId)) {
+                sellerMap.set(sellerId, []);
+            }
+            sellerMap.get(sellerId)!.push(item);
+        }
+
+        const groups = Array.from(sellerMap.entries()).map(([sellerId, items]) => {
+            const seller = items[0].product.user;
+            const sellerCountry = seller.profile?.country ?? null;
+            const delivery = this.deliveryService.resolveDelivery(
+                seller.delivery_option,
+                buyerCountry,
+                sellerCountry,
+            );
+            const subtotal = this.roundMoney(
+                items.reduce((sum, item) => sum + this.getCartItemUnitPrice(item) * item.quantity, 0),
+            );
+            const eligible_subtotal = coupon
+                ? this.roundMoney(
+                      items
+                          .filter((item) => this.isCouponApplicableToItem(coupon, item))
+                          .reduce((sum, item) => sum + this.getCartItemUnitPrice(item) * item.quantity, 0),
+                  )
+                : 0;
+
+            return {
+                seller: {
+                    id: sellerId,
+                    email: seller.email,
+                    name: seller.profile?.full_name ?? seller.email,
+                    avatar_url: seller.profile?.avatar_url ?? null,
+                    country: sellerCountry,
+                },
+                delivery: {
+                    type: delivery.type,
+                    partner: delivery.partner,
+                    cost: this.roundMoney(delivery.cost),
+                    days_min: delivery.days_min,
+                    days_max: delivery.days_max,
+                },
+                items: items.map((item) => ({
+                    id: item.id,
+                    productId: item.productId,
+                    variantId: item.variantId,
+                    quantity: item.quantity,
+                    price: this.getCartItemUnitPrice(item),
+                    line_total: this.roundMoney(this.getCartItemUnitPrice(item) * item.quantity),
+                    product: {
+                        id: item.product.id,
+                        name: item.product.name,
+                        image_urls: item.product.image_urls,
+                        image_url: item.product.image_urls?.[0] ?? null,
+                        categoryId: item.product.categoryId,
+                        subCategoryId: item.product.subCategoryId,
+                    },
+                    variant: item.variant
+                        ? { id: item.variant.id, variantName: item.variant.variantName, price: item.variant.price }
+                        : null,
+                })),
+                subtotal,
+                delivery_cost: this.roundMoney(delivery.cost),
+                eligible_subtotal,
+                discount_amount: 0,
+                total: 0,
+            };
+        });
+
+        const subtotal = this.roundMoney(groups.reduce((sum, group) => sum + group.subtotal, 0));
+        const shippingFee = this.roundMoney(groups.reduce((sum, group) => sum + group.delivery_cost, 0));
+        const discountAmount = coupon?.discount_amount ?? 0;
+
+        for (const group of groups) {
+            group.discount_amount = coupon?.eligible_subtotal
+                ? this.roundMoney(discountAmount * (group.eligible_subtotal / coupon.eligible_subtotal))
+                : 0;
+            group.total = this.roundMoney(group.subtotal + group.delivery_cost - group.discount_amount);
+        }
+
+        const total = this.roundMoney(groups.reduce((sum, group) => sum + group.total, 0));
+
+        return {
+            cart_id: cart.id,
+            selected_seller_ids: Array.from(sellerMap.keys()),
+            cart_item_count: checkoutItems.reduce((sum, item) => sum + item.quantity, 0),
+            seller_groups: groups.map(({ eligible_subtotal, ...group }) => group),
+            addresses: user.addresses,
+            selected_address: selectedAddress,
+            coupon: coupon
+                ? {
+                      id: coupon.id,
+                      code: coupon.code,
+                      discount_type: coupon.discount_type,
+                      discount_value: coupon.discount_value,
+                      discount_amount: coupon.discount_amount,
+                      message: coupon.message,
+                  }
+                : null,
+            price_details: {
+                subtotal,
+                shipping_fee: shippingFee,
+                discount: discountAmount,
+                total,
+            },
+            terms_required: true,
+            payment: {
+                provider: "stripe",
+                next_action: "create_checkout_session",
+            },
+        };
+    }
+
+    private async validateCouponForCart(couponCode: string, cartItems: any[]) {
+        const normalizedCode = couponCode.trim();
+        const coupon = await this.prismaService.coupon.findFirst({
+            where: { code: { equals: normalizedCode, mode: "insensitive" } } as any,
+        });
+
+        if (!coupon) {
+            throw new BadRequestException("Invalid coupon code. Please try again.");
+        }
+
+        const now = new Date();
+        if (!coupon.is_active || coupon.start_date > now || coupon.end_date < now) {
+            throw new BadRequestException("Invalid coupon code. Please try again.");
+        }
+
+        if (
+            coupon.usage_type === CouponUsageType.LIMITED &&
+            coupon.usage_limit !== null &&
+            coupon.used_count >= coupon.usage_limit
+        ) {
+            throw new BadRequestException("Coupon usage limit has been reached.");
+        }
+
+        const eligibleSubtotal = this.roundMoney(
+            cartItems
+                .filter((item) => this.isCouponApplicableToItem(coupon, item))
+                .reduce((sum, item) => sum + this.getCartItemUnitPrice(item) * item.quantity, 0),
+        );
+
+        if (eligibleSubtotal <= 0) {
+            throw new BadRequestException("This coupon is not applicable to the current cart.");
+        }
+
+        const discountAmount =
+            coupon.discount_type === CouponDiscountType.PERCENTAGE
+                ? this.roundMoney((eligibleSubtotal * coupon.discount_value) / 100)
+                : this.roundMoney(Math.min(coupon.discount_value, eligibleSubtotal));
+
+        return {
+            ...coupon,
+            eligible_subtotal: eligibleSubtotal,
+            discount_amount: Math.min(discountAmount, eligibleSubtotal),
+            message:
+                coupon.discount_type === CouponDiscountType.PERCENTAGE
+                    ? `${coupon.discount_value}% discount applied to your order.`
+                    : `EUR ${coupon.discount_value} discount applied to your order.`,
+        };
+    }
+
+    private isCouponApplicableToItem(
+        coupon: { categoryId?: number | null; subCategoryId?: number | null },
+        item: any,
+    ) {
+        if (coupon.categoryId && item.product.categoryId !== coupon.categoryId) {
+            return false;
+        }
+        if (coupon.subCategoryId && item.product.subCategoryId !== coupon.subCategoryId) {
+            return false;
+        }
+        return true;
+    }
+
+    private getCartItemUnitPrice(item: any) {
+        return this.roundMoney(item.product.discounted_price ?? item.product.original_price);
+    }
+
+    private normalizeSellerIds(sellerIds?: number[]) {
+        return [...new Set((sellerIds ?? []).map(Number).filter((sellerId) => Number.isInteger(sellerId) && sellerId > 0))];
+    }
+
+    private async resolveCheckoutAddress(userId: number, dto: CheckoutDto) {
+        if (dto.addressId) {
+            const address = await this.prismaService.userAddress.findFirst({
+                where: { id: dto.addressId, userId },
+            });
+
+            if (!address) {
+                throw new NotFoundException("Address not found");
+            }
+
+            return {
+                shippingAddress: address.address,
+                city: address.city,
+                postalCode: address.postal_code,
+                country: address.country,
+            };
+        }
+
+        if (!dto.shippingAddress || !dto.city || !dto.country) {
+            throw new BadRequestException("Provide either addressId or shippingAddress, city, and country.");
+        }
+
+        return {
+            shippingAddress: dto.shippingAddress,
+            city: dto.city,
+            postalCode: dto.postalCode,
+            country: dto.country,
+        };
+    }
+
+    private roundMoney(value: number) {
+        return Math.round((value + Number.EPSILON) * 100) / 100;
     }
 
     private getStatusesForBuyerTab(tab: BuyerOrderTab) {

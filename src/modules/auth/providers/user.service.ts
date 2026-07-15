@@ -60,9 +60,10 @@ export class UserService {
     }
 
     async emailVerified(userId: number) {
-        await this.prismaService.baseUser.update({
+        return this.prismaService.baseUser.update({
             where: { id: userId },
             data: { email_verifird: true },
+            include: { profile: true },
         });
     }
 

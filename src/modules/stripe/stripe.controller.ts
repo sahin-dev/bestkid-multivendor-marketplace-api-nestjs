@@ -15,6 +15,7 @@ import { ApiBearerAuth, ApiBody, ApiOperation, ApiQuery, ApiTags } from "@nestjs
 import { GetUser, Public, Roles } from "src/common/decorators";
 import { StripeService } from "./stripe.service";
 import { OnboardSellerDto } from "./dtos/onboard-seller.dto";
+import { CreateStripeCheckoutSessionDto } from "../order/dtos/checkout-flow.dto";
 import type { Request } from "express";
 
 @ApiTags("Stripe")
@@ -28,6 +29,13 @@ export class StripeController {
     @ApiBody({ type: OnboardSellerDto })
     async onboard(@GetUser("id") userId: number, @Body() dto: OnboardSellerDto) {
         return this.stripeService.onboardSeller(userId, dto.returnUrl, dto.refreshUrl);
+    }
+
+    @Post("checkout-session")
+    @ApiOperation({ summary: "Create buyer Stripe checkout session", description: "Creates a hosted Stripe Checkout payment session from the authenticated buyer's current cart, selected address, and optional coupon." })
+    @ApiBody({ type: CreateStripeCheckoutSessionDto })
+    async createCheckoutSession(@GetUser("id") userId: number, @Body() dto: CreateStripeCheckoutSessionDto) {
+        return this.stripeService.createCheckoutSession(userId, dto);
     }
 
     @Get("status")

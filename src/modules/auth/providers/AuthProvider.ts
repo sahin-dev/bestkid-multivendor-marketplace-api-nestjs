@@ -40,13 +40,17 @@ export class AuthProvider {
 
         }
 
-        const token = this.jwtService.sign(tokenPayload)
+        const token = this.generateJwtToken(tokenPayload)
 
         return token
 
     }
 
     public signToken(payload: TokenPayload): string {
+        return this.generateJwtToken(payload)
+    }
+
+    private generateJwtToken(payload: TokenPayload): string {
         return this.jwtService.sign(payload)
     }
 

@@ -439,7 +439,7 @@ const couponExample = {
     subCategoryId: 2,
     discount_type: "PERCENTAGE",
     discount_value: 20,
-    usage_type: "MULTIPLE",
+    usage_type: "LIMITED",
     usage_limit: 100,
     used_count: 12,
     start_date: "2026-07-01T00:00:00.000Z",
@@ -605,6 +605,73 @@ const orderDetailExample = {
         can_cancel: true,
     },
     items: [orderItemExample],
+};
+
+const checkoutSummaryExample = {
+    selected_seller_ids: [7],
+    cart_item_count: 3,
+    seller_groups: [
+        {
+            seller: {
+                id: 7,
+                email: "seller@example.com",
+                name: "Roberts Junior",
+                avatar_url: "https://cdn.bestkid.test/avatars/seller.png",
+                country: "Bulgaria",
+            },
+            delivery: {
+                type: "domestic",
+                partner: "Bulgarian Post",
+                cost: 4.99,
+                days_min: 2,
+                days_max: 4,
+            },
+            items: [
+                {
+                    id: 31,
+                    productId: 1,
+                    variantId: 10,
+                    quantity: 2,
+                    price: 260,
+                    line_total: 520,
+                    product: {
+                        id: 1,
+                        name: "Kolev and Kolev - Soft Fit",
+                        image_urls: ["https://cdn.bestkid.test/products/shoes-front.png"],
+                        image_url: "https://cdn.bestkid.test/products/shoes-front.png",
+                        categoryId: 1,
+                        subCategoryId: 2,
+                    },
+                    variant: { id: 10, variantName: "S", price: 260 },
+                },
+            ],
+            subtotal: 520,
+            delivery_cost: 4.99,
+            discount_amount: 104,
+            total: 420.99,
+        },
+    ],
+    addresses: [addressExample],
+    selected_address: addressExample,
+    coupon: {
+        id: 6,
+        code: "KIDS20",
+        discount_type: "PERCENTAGE",
+        discount_value: 20,
+        discount_amount: 104,
+        message: "20% discount applied to your order.",
+    },
+    price_details: {
+        subtotal: 520,
+        shipping_fee: 4.99,
+        discount: 104,
+        total: 420.99,
+    },
+    terms_required: true,
+    payment: {
+        provider: "stripe",
+        next_action: "create_checkout_session",
+    },
 };
 
 const sellerOrderDetailExample = {
@@ -1428,6 +1495,23 @@ function getRouteSuccessExample(method: string, path: string) {
             message: "Request successful",
             data: { orders: [orderDetailExample] },
         },
+        "GET /orders/checkout/summary": {
+            success: true,
+            statusCode: 200,
+            message: "Request successful",
+            data: checkoutSummaryExample,
+        },
+        "POST /orders/checkout/apply-coupon": {
+            success: true,
+            statusCode: 200,
+            message: "Request successful",
+            data: {
+                valid: true,
+                message: "20% discount applied to your order.",
+                coupon: checkoutSummaryExample.coupon,
+                price_details: checkoutSummaryExample.price_details,
+            },
+        },
         "GET /orders": {
             success: true,
             statusCode: 200,
@@ -2239,6 +2323,18 @@ function getRouteSuccessExample(method: string, path: string) {
             data: {
                 url: "https://connect.stripe.com/setup/s/acct_123456789",
                 stripe_account_id: "acct_123456789",
+            },
+        },
+        "POST /stripe/checkout-session": {
+            success: true,
+            statusCode: 201,
+            message: "Request successful",
+            data: {
+                session_id: "cs_test_123456789",
+                url: "https://checkout.stripe.com/c/pay/cs_test_123456789",
+                currency: "eur",
+                amount_total: 420.99,
+                checkout_summary: checkoutSummaryExample,
             },
         },
         "GET /stripe/status": {

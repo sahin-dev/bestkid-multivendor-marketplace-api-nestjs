@@ -13,6 +13,7 @@ import { AdminProductApprovalFilter, AdminProductQueryDto } from "./dtos/admin-p
 import { AuthenticationStatus, ProductStatus } from "generated/prisma/client";
 import type { Request } from "express";
 import { TokenPayload } from "../auth/types/TokenPayload.type";
+import { UpdateProductStatusDto } from "./dtos/update-product-status.dto";
 
 @ApiTags("Products")
 @Controller("products")
@@ -35,8 +36,12 @@ export class ProductController {
     @ApiQuery({ name: "page", required: false, type: Number })
     @ApiQuery({ name: "limit", required: false, type: Number })
     @ApiQuery({ name: "categoryId", required: false, type: Number })
+    @ApiQuery({ name: "subCategoryId", required: false, type: Number })
     @ApiQuery({ name: "sellerId", required: false, type: Number })
     @ApiQuery({ name: "search", required: false, type: String })
+    @ApiQuery({ name: "minPrice", required: false, type: Number })
+    @ApiQuery({ name: "maxPrice", required: false, type: Number })
+    @ApiQuery({ name: "condition", required: false, enum: ["NEW", "USED", "REFURBISHED"] })
     @ApiQuery({ name: "sort", required: false, enum: ["latest", "price_low", "price_high", "rating", "popular"] })
     @ApiQuery({ name: "minRating", required: false, type: Number })
     @ApiQuery({ name: "discountedOnly", required: false, type: Boolean })
@@ -71,6 +76,7 @@ export class ProductController {
     @ApiQuery({ name: "limit", required: false, type: Number })
     @ApiQuery({ name: "search", required: false, type: String })
     @ApiQuery({ name: "status", required: false, enum: ProductStatus })
+    @ApiQuery({ name: "sort", required: false, enum: ["latest", "price_low", "price_high", "rating", "popular"] })
     async findSellerProducts(@GetUser("id") sellerId: number, @Query() query: ProductQueryDto) {
         return this.productService.findSellerProducts(sellerId, query);
     }
@@ -92,12 +98,13 @@ export class ProductController {
     @Roles("USER", "ADMIN")
     @ApiOperation({ summary: "Seller: mark a product active, inactive, or out of stock" })
     @ApiParam({ name: "id", type: Number })
+    @ApiBody({ type: UpdateProductStatusDto })
     async updateSellerProductStatus(
         @Param("id", ParseIntPipe) productId: number,
-        @Body("status") status: ProductStatus,
+        @Body() dto: UpdateProductStatusDto,
         @GetUser() payload: TokenPayload,
     ) {
-        return this.productService.updateSellerProductStatus(productId, payload.id, status, payload.role === "ADMIN");
+        return this.productService.updateSellerProductStatus(productId, payload.id, dto.status, payload.role === "ADMIN");
     }
 
     @Patch("admin/:id/auth-status")

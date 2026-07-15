@@ -110,7 +110,14 @@ export class AuthService {
         const otpVerification = await this.otpService.verifyOtp(verifyOtpDto.requestId, verifyOtpDto.otp)
 
         if (otpVerification?.purpose === OtpPurpose.EMAIL_VERIFICATION && otpVerification?.userId) {
-            await this.userService.emailVerified(otpVerification.userId)
+            const user = await this.userService.emailVerified(otpVerification.userId)
+            const accessToken = this.authProvider.signToken({
+                id: user.id,
+                role: user.role,
+                email: user.email,
+            })
+
+            return { ...otpVerification, access_token: accessToken }
         }
 
         return otpVerification

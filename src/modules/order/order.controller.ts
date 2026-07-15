@@ -6,6 +6,7 @@ import { CreateOrderDto } from "./dtos/create-order.dto";
 import { UpdateOrderStatusDto } from "./dtos/update-order-status.dto";
 import { BuyerOrderTab, OrderQueryDto, SellerOrderTab } from "./dtos/order-query.dto";
 import { CheckoutDto } from "./dtos/checkout.dto";
+import { ApplyCouponDto, CheckoutSummaryQueryDto } from "./dtos/checkout-flow.dto";
 import { TokenPayload } from "../auth/types/TokenPayload.type";
 import { OrderStatus } from "generated/prisma/client";
 import { CancelOrderDto } from "./dtos/cancel-order.dto";
@@ -26,11 +27,26 @@ export class OrderController {
     }
 
     @Post("checkout")
-    @ApiOperation({ summary: "Checkout the authenticated user's cart", description: "Groups cart items by seller, resolves delivery options, creates one order per seller, and clears the cart." })
+    @ApiOperation({ summary: "Checkout the authenticated user's cart", description: "Groups cart items by seller, resolves delivery options, applies an optional coupon, creates one order per seller, and clears the cart." })
     @ApiBody({ type: CheckoutDto })
     @ApiResponse({ status: 201, description: "Checkout completed; returns created orders" })
     async checkoutFromCart(@GetUser("id") userId: number, @Body() dto: CheckoutDto) {
         return this.orderService.checkoutFromCart(userId, dto);
+    }
+
+    @Get("checkout/summary")
+    @ApiOperation({ summary: "Preview checkout summary", description: "Returns seller-grouped cart items, delivery options, saved addresses, optional coupon discount, and price details for the checkout page." })
+    @ApiResponse({ status: 200, description: "Checkout summary for review before payment" })
+    async getCheckoutSummary(@GetUser("id") userId: number, @Query() query: CheckoutSummaryQueryDto) {
+        return this.orderService.getCheckoutSummary(userId, query);
+    }
+
+    @Post("checkout/apply-coupon")
+    @ApiOperation({ summary: "Apply coupon to checkout", description: "Validates a buyer-entered coupon code against the current cart. Address and country are collected during final checkout." })
+    @ApiBody({ type: ApplyCouponDto })
+    @ApiResponse({ status: 200, description: "Coupon applied; returns discount and recalculated totals" })
+    async applyCoupon(@GetUser("id") userId: number, @Body() dto: ApplyCouponDto) {
+        return this.orderService.applyCoupon(userId, dto);
     }
 
     @Get()

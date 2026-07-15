@@ -57,7 +57,7 @@ async function bootstrap() {
     .addTag('User Management', 'Admin user listing, blocking, and seller tier management')
     .addTag('Products', 'Product listing, moderation, variants, and reviews')
     .addTag('Categories', 'Product category and sub-category management')
-    .addTag('Orders', 'Buyer, seller, and admin order workflows')
+    .addTag('Orders', 'Buyer cart checkout, coupon preview, seller orders, and admin order workflows')
     .addTag('Returns', 'Return request workflows')
     .addTag('Cart', 'Authenticated cart management')
     .addTag('Wishlist', 'Authenticated saved products')
@@ -68,7 +68,7 @@ async function bootstrap() {
     .addTag('Content', 'FAQ, legal documents, company info, and help/support requests')
     .addTag('Notifications', 'Notification list and read state')
     .addTag('Chat', 'Chat rooms and messages')
-    .addTag('Stripe', 'Stripe seller onboarding and admin connected accounts')
+    .addTag('Stripe', 'Stripe buyer checkout sessions, seller onboarding, and admin connected accounts')
     .addTag('Uploads', 'File upload and deletion')
     .addBearerAuth(
       {
