@@ -27,9 +27,11 @@ import { SellerModule } from './modules/seller/seller.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { CouponModule } from './modules/coupon/coupon.module';
 import { WishlistModule } from './modules/wishlist/wishlist.module';
+import { SentryModule } from '@sentry/nestjs/setup';
 
 @Module({
   imports: [
+    SentryModule.forRoot(),
     ConfigModule.forRoot({ isGlobal: true, load: [dbConfig, mailerConfig, jwtConfig, stripeConfig] }),
     PrismaModule,
     AuthModule,

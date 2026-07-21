@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadGatewayException, BadRequestException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import type { ConfigType } from "@nestjs/config";
 import { PrismaService } from "../prisma/prisma.service";
 import stripeConfig, { StripeConfig } from "src/config/stripe.config";
@@ -16,7 +16,12 @@ export class StripeService {
         private readonly orderService: OrderService,
         @Inject(stripeConfig.KEY) private readonly stripeConfiguration: ConfigType<typeof StripeConfig>,
     ) {
-        this.stripe = new Stripe(this.stripeConfiguration.stripe_key!, {
+        const stripeKey = this.stripeConfiguration.stripe_key?.trim();
+        if (!stripeKey) {
+            throw new Error("STRIPE_KEY is not configured.");
+        }
+
+        this.stripe = new Stripe(stripeKey, {
             apiVersion: "2026-06-24.dahlia" as any,
         });
     }
@@ -36,11 +41,7 @@ export class StripeService {
 
         // Create Stripe account only if it doesn't exist yet
         if (!accountId) {
-            const account = await this.stripe.accounts.create({
-                type: "express",
-                email: user.email,
-                capabilities: { card_payments: { requested: true }, transfers: { requested: true } },
-            });
+            const account = await this.createStripeAccount(user.email);
             accountId = account.id;
             await this.prismaService.baseUser.update({
                 where: { id: userId },
@@ -49,14 +50,51 @@ export class StripeService {
         }
 
         const appBaseUrl = process.env.APP_URL ?? "http://localhost:3000";
-        const accountLink = await this.stripe.accountLinks.create({
-            account: accountId,
-            refresh_url: refreshUrl ?? `${appBaseUrl}/stripe/onboard`,
-            return_url: returnUrl ?? `${appBaseUrl}/stripe/callback`,
-            type: "account_onboarding",
-        });
+        const accountLink = await this.createStripeAccountLink(
+            accountId,
+            refreshUrl ?? `${appBaseUrl}/stripe/onboard`,
+            returnUrl ?? `${appBaseUrl}/stripe/callback`,
+        );
 
         return { url: accountLink.url, stripe_account_id: accountId };
+    }
+
+    private async createStripeAccount(email: string) {
+        try {
+            return await this.stripe.accounts.create({
+                type: "express",
+                email,
+                capabilities: { card_payments: { requested: true }, transfers: { requested: true } },
+            });
+        } catch (err) {
+            this.throwStripeOnboardingError(err, "create connected account");
+        }
+    }
+
+    private async createStripeAccountLink(accountId: string, refreshUrl: string, returnUrl: string) {
+        try {
+            return await this.stripe.accountLinks.create({
+                account: accountId,
+                refresh_url: refreshUrl,
+                return_url: returnUrl,
+                type: "account_onboarding",
+            });
+        } catch (err) {
+            this.throwStripeOnboardingError(err, "create onboarding link");
+        }
+    }
+
+    private throwStripeOnboardingError(err: unknown, action: string): never {
+        const stripeError = err as Partial<Stripe.errors.StripeError> | undefined;
+        const message = stripeError?.message ?? "Stripe rejected the onboarding request.";
+
+        this.logger.error(`Failed to ${action}: ${message}`, err instanceof Error ? err.stack : undefined);
+
+        if (stripeError?.type?.startsWith("Stripe")) {
+            throw new BadRequestException(`Stripe onboarding failed: ${message}`);
+        }
+
+        throw new BadGatewayException(`Stripe onboarding failed while trying to ${action}.`);
     }
 
     async createCheckoutSession(userId: number, dto: CreateStripeCheckoutSessionDto) {

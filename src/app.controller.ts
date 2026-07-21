@@ -17,4 +17,10 @@ export class AppController {
     return { message: "Hello World" }
   }
 
+  @Get("/debug-sentry")
+  @Public()
+  getError() {
+    throw new Error("My first Sentry error!");
+  }
+
 }
