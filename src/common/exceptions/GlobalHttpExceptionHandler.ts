@@ -1,8 +1,10 @@
-import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus } from "@nestjs/common";
+import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logger } from "@nestjs/common";
+import * as Sentry from "@sentry/nestjs";
 import { Request, Response } from "express";
 
 @Catch()
 export class GlobalHttpExceptionHandler implements ExceptionFilter{
+    private readonly logger = new Logger(GlobalHttpExceptionHandler.name);
 
     catch(exception: any, host: ArgumentsHost) {
 
@@ -13,8 +15,14 @@ export class GlobalHttpExceptionHandler implements ExceptionFilter{
         const request = ctx.getRequest<Request>()
 
         const prismaError = this.getPrismaErrorResponse(exception, request);
+        const externalError = this.getExternalErrorResponse(exception);
+        const applicationError = this.getApplicationErrorResponse(exception);
         const status = prismaError
             ? prismaError.status
+            : externalError
+            ? externalError.status
+            : applicationError
+            ? applicationError.status
             : exception instanceof HttpException
               ? exception.getStatus()
               : HttpStatus.INTERNAL_SERVER_ERROR
@@ -22,22 +30,35 @@ export class GlobalHttpExceptionHandler implements ExceptionFilter{
 
         const exceptionResponse = prismaError
             ? { message: prismaError.message }
+            : externalError
+            ? { message: externalError.message }
+            : applicationError
+            ? { message: applicationError.message }
             : exception instanceof HttpException
             ? exception.getResponse()
-            : { message: "Internal server error!" }
+            : { message: "Unexpected server error. Please try again later." }
         const message = typeof exceptionResponse === "string"
             ? exceptionResponse
-            : exceptionResponse["message"] ?? "Internal server error!"
+            : exceptionResponse["message"] ?? "Unexpected server error. Please try again later."
+
+        if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
+            this.logger.error(
+                `${request.method} ${url} failed: ${Array.isArray(message) ? message.join(", ") : message}`,
+                exception?.stack ?? exception,
+            );
+        }
+
+        const errorId = this.captureException(exception, request, status, message);
+        const errorResponse = {
+            success: false,
+            message,
+            url,
+            statusCode: status,
+            ...(errorId ? { errorId } : {}),
+        };
         
         response.status(status)
-        .json(
-            {
-                success: false,
-                message,
-                url,
-                statusCode:status
-            }
-        )
+        .json(errorResponse)
     }
 
     private getPrismaErrorResponse(exception: any, request: Request): { status: number; message: string } | null {
@@ -67,6 +88,182 @@ export class GlobalHttpExceptionHandler implements ExceptionFilter{
         }
 
         return null;
+    }
+
+    private getExternalErrorResponse(exception: any): { status: number; message: string } | null {
+        if (this.isStripeError(exception)) {
+            const stripeStatus = typeof exception.statusCode === "number" ? exception.statusCode : undefined;
+            const status = stripeStatus && stripeStatus >= 400 && stripeStatus < 500
+                ? HttpStatus.BAD_REQUEST
+                : HttpStatus.BAD_GATEWAY;
+            const param = exception.param ? ` (${exception.param})` : "";
+            return {
+                status,
+                message: `Stripe request failed${param}: ${exception.message ?? "Please check your Stripe configuration and request data."}`,
+            };
+        }
+
+        if (exception?.name === "MulterError") {
+            return {
+                status: HttpStatus.BAD_REQUEST,
+                message: `File upload failed: ${exception.message ?? "Invalid upload request."}`,
+            };
+        }
+
+        if (exception instanceof SyntaxError && "body" in exception) {
+            return {
+                status: HttpStatus.BAD_REQUEST,
+                message: "Invalid JSON request body.",
+            };
+        }
+
+        return null;
+    }
+
+    private getApplicationErrorResponse(exception: any): { status: number; message: string } | null {
+        if (exception instanceof HttpException) {
+            return null;
+        }
+
+        if (exception?.name === "PrismaClientValidationError") {
+            return {
+                status: HttpStatus.BAD_REQUEST,
+                message: "Invalid database query. Please check the submitted fields and required IDs.",
+            };
+        }
+
+        if (exception?.name === "PrismaClientInitializationError") {
+            return {
+                status: HttpStatus.SERVICE_UNAVAILABLE,
+                message: "Database connection failed. Please try again later.",
+            };
+        }
+
+        if (exception?.name === "PrismaClientUnknownRequestError") {
+            return {
+                status: HttpStatus.INTERNAL_SERVER_ERROR,
+                message: "Database request failed. Please try again later.",
+            };
+        }
+
+        if (exception instanceof Error && exception.message) {
+            return {
+                status: HttpStatus.INTERNAL_SERVER_ERROR,
+                message: this.getSafeErrorMessage(exception.message),
+            };
+        }
+
+        return null;
+    }
+
+    private isStripeError(exception: any) {
+        const type = String(exception?.type ?? exception?.raw?.type ?? "");
+        return type.startsWith("Stripe") || Boolean(exception?.raw?.requestId && exception?.raw?.type);
+    }
+
+    private getSafeErrorMessage(message: string) {
+        const trimmed = message.trim();
+        if (!trimmed) {
+            return "Unexpected server error. Please try again later.";
+        }
+
+        const sensitivePatterns = [/password/i, /secret/i, /token/i, /api[_ -]?key/i, /authorization/i, /database_url/i];
+        if (sensitivePatterns.some((pattern) => pattern.test(trimmed))) {
+            return "Server configuration error. Please contact support.";
+        }
+
+        return trimmed;
+    }
+
+    private captureException(exception: any, request: Request, status: number, message: string | string[]) {
+        if (!this.shouldReportToSentry(exception, status)) {
+            return null;
+        }
+
+        return Sentry.withScope((scope) => {
+            const payload = (request as any).payload;
+            const user = (request as any).user;
+
+            scope.setTag("http.method", request.method);
+            scope.setTag("http.status_code", String(status));
+            scope.setTag("request.url", request.originalUrl ?? request.url);
+            scope.setTag("error.source", this.getErrorSource(exception));
+
+            if (payload?.id || user?.id) {
+                scope.setUser({
+                    id: String(payload?.id ?? user?.id),
+                    email: payload?.email ?? user?.email,
+                });
+            }
+
+            scope.setContext("request", {
+                method: request.method,
+                url: request.originalUrl ?? request.url,
+                params: request.params,
+                query: request.query,
+                body: this.sanitizeObject(request.body),
+                userAgent: request.headers?.["user-agent"],
+            });
+
+            scope.setContext("response", {
+                statusCode: status,
+                clientMessage: message,
+            });
+
+            return Sentry.captureException(exception);
+        });
+    }
+
+    private shouldReportToSentry(exception: any, status: number) {
+        if (status >= HttpStatus.INTERNAL_SERVER_ERROR) {
+            return true;
+        }
+
+        return this.isStripeError(exception);
+    }
+
+    private getErrorSource(exception: any) {
+        if (this.isStripeError(exception)) {
+            return "stripe";
+        }
+
+        if (exception?.code && exception?.clientVersion) {
+            return "prisma";
+        }
+
+        if (exception?.name === "MulterError") {
+            return "upload";
+        }
+
+        if (exception instanceof HttpException) {
+            return "http";
+        }
+
+        return "application";
+    }
+
+    private sanitizeObject(value: unknown): unknown {
+        if (!value || typeof value !== "object") {
+            return value;
+        }
+
+        if (Array.isArray(value)) {
+            return value.map((item) => this.sanitizeObject(item));
+        }
+
+        return Object.fromEntries(
+            Object.entries(value as Record<string, unknown>).map(([key, child]) => {
+                if (this.isSensitiveKey(key)) {
+                    return [key, "[Filtered]"];
+                }
+
+                return [key, this.sanitizeObject(child)];
+            }),
+        );
+    }
+
+    private isSensitiveKey(key: string) {
+        return /password|token|secret|authorization|cookie|api[_-]?key|stripe|webhook/i.test(key);
     }
 
     private getForeignKeyMessage(exception: any, request: Request) {
