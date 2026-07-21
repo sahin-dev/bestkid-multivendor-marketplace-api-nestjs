@@ -1,0 +1,195 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '10'
+  RELEASE_ARTIFACT: bestkid-release
+  PM2_APP_NAME: ${{ secrets.PM2_APP_NAME || 'bestkid-api' }}
+  DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/var/www/bestkid' }}
+  EC2_PORT: ${{ secrets.EC2_PORT || '22' }}
+  RUN_MIGRATIONS: ${{ vars.RUN_MIGRATIONS || 'true' }}
+  HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
+
+jobs:
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm prisma generate
+
+      - name: Run tests
+        run: pnpm exec jest --runInBand
+
+      - name: Build application
+        run: pnpm run build
+
+      - name: Prepare release bundle
+        run: |
+          set -euo pipefail
+          rm -rf release
+          mkdir -p release
+
+          cp -r dist release/dist
+          cp package.json release/package.json
+          cp pnpm-lock.yaml release/pnpm-lock.yaml
+          cp ecosystem.config.js release/ecosystem.config.js
+          cp -r prisma release/prisma
+
+          if [ -d generated ]; then
+            cp -r generated release/generated
+          fi
+
+          tar -czf release.tar.gz -C release .
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.RELEASE_ARTIFACT }}
+          path: release.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: build
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    environment: production
+
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.RELEASE_ARTIFACT }}
+
+      - name: Prepare SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          set -euo pipefail
+
+          test -n "$EC2_HOST" || (echo "Missing EC2_HOST secret" && exit 1)
+          test -n "$EC2_USER" || (echo "Missing EC2_USER secret" && exit 1)
+          test -n "$EC2_SSH_KEY" || (echo "Missing EC2_SSH_KEY secret" && exit 1)
+
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "$EC2_PORT" "$EC2_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload release to EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          RELEASE_ID: ${{ github.run_number }}-${{ github.sha }}
+        run: |
+          set -euo pipefail
+          scp -i ~/.ssh/deploy_key -P "$EC2_PORT" release.tar.gz "$EC2_USER@$EC2_HOST:/tmp/bestkid-$RELEASE_ID.tar.gz"
+
+      - name: Activate release with PM2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+          RELEASE_ID: ${{ github.run_number }}-${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          ssh -i ~/.ssh/deploy_key -p "$EC2_PORT" "$EC2_USER@$EC2_HOST" \
+            "DEPLOY_PATH='$DEPLOY_PATH' RELEASE_ID='$RELEASE_ID' PM2_APP_NAME='$PM2_APP_NAME' RUN_MIGRATIONS='$RUN_MIGRATIONS' HEALTHCHECK_URL='$HEALTHCHECK_URL' bash -s" <<'REMOTE'
+          set -Eeuo pipefail
+
+          RELEASE_TARBALL="/tmp/bestkid-$RELEASE_ID.tar.gz"
+          RELEASE_DIR="$DEPLOY_PATH/releases/$RELEASE_ID"
+          SHARED_DIR="$DEPLOY_PATH/shared"
+          CURRENT_LINK="$DEPLOY_PATH/current"
+
+          mkdir -p "$DEPLOY_PATH/releases" "$SHARED_DIR/uploads" "$SHARED_DIR/logs"
+
+          if [ ! -f "$SHARED_DIR/.env" ]; then
+            echo "Missing production env file: $SHARED_DIR/.env"
+            exit 1
+          fi
+
+          mkdir -p "$RELEASE_DIR"
+          tar -xzf "$RELEASE_TARBALL" -C "$RELEASE_DIR"
+
+          ln -sfn "$SHARED_DIR/.env" "$RELEASE_DIR/.env"
+          rm -rf "$RELEASE_DIR/uploads" "$RELEASE_DIR/logs"
+          ln -sfn "$SHARED_DIR/uploads" "$RELEASE_DIR/uploads"
+          ln -sfn "$SHARED_DIR/logs" "$RELEASE_DIR/logs"
+
+          cd "$RELEASE_DIR"
+
+          if ! command -v pnpm >/dev/null 2>&1; then
+            corepack enable
+            corepack prepare pnpm@10 --activate
+          fi
+
+          pnpm install --frozen-lockfile
+          pnpm prisma generate
+
+          if [ "$RUN_MIGRATIONS" = "true" ]; then
+            pnpm prisma migrate deploy
+          fi
+
+          pnpm prune --prod
+
+          echo "$RELEASE_ID" > "$RELEASE_DIR/.release"
+          ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
+
+          cd "$CURRENT_LINK"
+          export PM2_CWD="$CURRENT_LINK"
+
+          if pm2 describe "$PM2_APP_NAME" >/dev/null 2>&1; then
+            pm2 reload ecosystem.config.js --only "$PM2_APP_NAME" --env production --update-env
+          else
+            pm2 start ecosystem.config.js --only "$PM2_APP_NAME" --env production
+          fi
+
+          pm2 save
+
+          if [ -n "$HEALTHCHECK_URL" ]; then
+            curl --fail --silent --show-error --retry 5 --retry-delay 5 "$HEALTHCHECK_URL" >/dev/null
+          fi
+
+          cd "$DEPLOY_PATH/releases"
+          ls -1dt */ | tail -n +6 | xargs -r rm -rf
+          rm -f "$RELEASE_TARBALL"
+          REMOTE
