@@ -24,6 +24,7 @@ model Order {
   city            String?
   postalCode      String?
   country         String?
+  stripe_checkout_session_id String? @unique
 
   items    OrderItem[]
   user     BaseUser    @relation("BuyerOrders",  fields: [userId],   references: [id])

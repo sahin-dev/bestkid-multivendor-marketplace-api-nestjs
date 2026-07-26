@@ -70,6 +70,7 @@ async function bootstrap() {
     .addTag('Notifications', 'Notification list and read state')
     .addTag('Chat', 'Chat rooms and messages')
     .addTag('Stripe', 'Stripe buyer checkout sessions, seller onboarding, and admin connected accounts')
+    .addTag('LegitGrails', 'Product authentication submissions and webhook results')
     .addTag('Uploads', 'File upload and deletion')
     .addBearerAuth(
       {

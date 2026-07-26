@@ -50,6 +50,17 @@ export class CheckoutDto {
     })
     sellerIds?: number[];
 
+    @Transform(({ value }) => toNumberArray(value))
+    @IsArray()
+    @IsInt({ each: true })
+    @IsOptional()
+    @ApiPropertyOptional({
+        type: [Number],
+        description: "Exact cart item IDs to checkout. Use this for selected products from cart.",
+        example: [14, 18],
+    })
+    cartItemIds?: number[];
+
     @Type(() => Number)
     @IsInt()
     @IsOptional()

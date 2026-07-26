@@ -8,6 +8,7 @@ import dbConfig from './config/db.config';
 import mailerConfig from './config/mailer.config';
 import jwtConfig from './config/jwt.config';
 import stripeConfig from './config/stripe.config';
+import legitgrailsConfig from './config/legitgrails.config';
 import { ProfileModule } from './modules/profile/profile.module';
 import { FileUploadModule } from './modules/file-upload/file-upload.module';
 import { CategoryModule } from './modules/category/category.module';
@@ -28,11 +29,12 @@ import { AdminModule } from './modules/admin/admin.module';
 import { CouponModule } from './modules/coupon/coupon.module';
 import { WishlistModule } from './modules/wishlist/wishlist.module';
 import { SentryModule } from '@sentry/nestjs/setup';
+import { LegitGrailsModule } from './modules/legitgrails/legitgrails.module';
 
 @Module({
   imports: [
     SentryModule.forRoot(),
-    ConfigModule.forRoot({ isGlobal: true, load: [dbConfig, mailerConfig, jwtConfig, stripeConfig] }),
+    ConfigModule.forRoot({ isGlobal: true, load: [dbConfig, mailerConfig, jwtConfig, stripeConfig, legitgrailsConfig] }),
     PrismaModule,
     AuthModule,
     ProfileModule,
@@ -54,6 +56,7 @@ import { SentryModule } from '@sentry/nestjs/setup';
     AdminModule,
     CouponModule,
     WishlistModule,
+    LegitGrailsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

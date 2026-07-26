@@ -25,6 +25,7 @@ model Product {
   approved_at         DateTime?
   rejected_at         DateTime?
   variants            ProductVariant[]
+  authentication_requests ProductAuthenticationRequest[]
   subCategory         SubCategory     @relation(fields: [subCategoryId], references: [id])
   category            Category        @relation(fields: [categoryId], references: [id])
   user                BaseUser        @relation(fields: [userId], references: [id])
@@ -33,6 +34,30 @@ model Product {
   updatedAt DateTime @updatedAt
 
   @@map("products")
+}
+
+model ProductAuthenticationRequest {
+  id              Int       @id @default(autoincrement())
+  productId       Int
+  provider        String    @default("LEGITGRAILS")
+  externalOrderId String?
+  status          String
+  verdict         String?
+  certificateUrl  String?
+  reportUrl       String?
+  submittedAt     DateTime?
+  completedAt     DateTime?
+  lastError        String?
+  rawRequest       Json?
+  rawResponse      Json?
+  product          Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+  @@index([externalOrderId])
+  @@map("product_authentication_requests")
 }
 
 model ProductVariant {

@@ -34,6 +34,7 @@ export class CartService {
         });
         if (!product) throw new NotFoundException(`Product with ID ${dto.productId} not found`);
         if (product.status !== "ACTIVE") throw new BadRequestException("Product is not available");
+        if (product.userId === userId) throw new BadRequestException("You cannot add your own product to cart");
         if (!product.user.stripe_onboarding_complete) {
             throw new ForbiddenException("This seller has not completed payment setup.");
         }

@@ -158,10 +158,14 @@ async function main() {
   }
 
   const products = await seedProducts(sellers, categories);
-  await seedOrdersAndReturns(sellers, buyers, products);
+  const orderItems = await seedOrdersAndReturns(sellers, buyers, products);
+  await seedBuyerCommerce(buyers, sellers, products);
+  await seedProductReviews(orderItems);
+  await seedChats(sellers, buyers);
   await seedNotifications(admin.id, sellers, buyers);
   await seedCoupons(categories);
   await seedContentAndSupport(buyers);
+  await seedFaqs();
 
   console.log("Seed complete.");
   console.log(`Login password for seeded users: ${password}`);
@@ -394,11 +398,22 @@ async function seedOrdersAndReturns(
   });
 
   if (existingOrders > 0) {
-    return;
+    const existingOrderItems = await prisma.orderItem.findMany({
+      where: { order: { sellerId: { in: sellers.map((seller) => seller.id) } } },
+      select: { id: true, productId: true, order: { select: { userId: true } } },
+      take: 8,
+      orderBy: { createdAt: "asc" },
+    });
+
+    return existingOrderItems.map((item) => ({
+      id: item.id,
+      productId: item.productId,
+      userId: item.order.userId,
+    }));
   }
 
   const statuses = ["PENDING", "CONFIRMED", "PROCESSING", "SHIPPED", "DELIVERED"] as const;
-  const createdOrderItems: { id: number; userId: number }[] = [];
+  const createdOrderItems: { id: number; productId: number; userId: number }[] = [];
 
   for (const [sellerIndex, seller] of sellers.entries()) {
     const sellerProducts = products[seller.id];
@@ -441,7 +456,7 @@ async function seedOrdersAndReturns(
       });
 
       if (order.items[0]) {
-        createdOrderItems.push({ id: order.items[0].id, userId: buyer.id });
+        createdOrderItems.push({ id: order.items[0].id, productId: product.id, userId: buyer.id });
       }
     }
   }
@@ -455,6 +470,148 @@ async function seedOrdersAndReturns(
         images: [],
         status: index === 0 ? "PENDING" : index === 1 ? "APPROVED" : "REJECTED",
       },
+    });
+  }
+
+  return createdOrderItems;
+}
+
+async function seedBuyerCommerce(
+  buyers: SeedUser[],
+  sellers: SeedUser[],
+  products: Record<number, { id: number; price: number }[]>,
+) {
+  const allProducts = sellers.flatMap((seller) => products[seller.id] ?? []);
+
+  for (const [buyerIndex, buyer] of buyers.entries()) {
+    const cart = await prisma.cart.upsert({
+      where: { userId: buyer.id },
+      update: {},
+      create: { userId: buyer.id },
+    });
+
+    const selectedProducts = [
+      allProducts[buyerIndex % allProducts.length],
+      allProducts[(buyerIndex + 3) % allProducts.length],
+    ].filter(Boolean);
+
+    for (const [itemIndex, product] of selectedProducts.entries()) {
+      const variant = await prisma.productVariant.findFirst({
+        where: { productId: product.id },
+        orderBy: { id: "asc" },
+      });
+
+      if (!variant) {
+        continue;
+      }
+
+      const existingCartItem = await prisma.cartItem.findFirst({
+        where: { cartId: cart.id, productId: product.id, variantId: variant.id },
+      });
+
+      if (existingCartItem) {
+        await prisma.cartItem.update({
+          where: { id: existingCartItem.id },
+          data: { quantity: itemIndex + 1 },
+        });
+      } else {
+        await prisma.cartItem.create({
+          data: {
+            cartId: cart.id,
+            productId: product.id,
+            variantId: variant.id,
+            quantity: itemIndex + 1,
+          },
+        });
+      }
+
+      await prisma.wishlistItem.upsert({
+        where: { userId_productId: { userId: buyer.id, productId: product.id } },
+        update: {},
+        create: { userId: buyer.id, productId: product.id },
+      });
+
+      await prisma.recentlyView.upsert({
+        where: { userId_productId: { userId: buyer.id, productId: product.id } },
+        update: { viewedAt: new Date() },
+        create: { userId: buyer.id, productId: product.id },
+      });
+    }
+  }
+}
+
+async function seedProductReviews(orderItems: { id: number; productId: number; userId: number }[]) {
+  const reviewInputs = orderItems.slice(0, 6).map((item, index) => ({
+    productId: item.productId,
+    userId: item.userId,
+    orderItemId: item.id,
+    rating: 5 - (index % 2),
+    review: index % 2 === 0
+      ? "Great quality and exactly as described."
+      : "Nice product, fast delivery, and good packaging.",
+  }));
+
+  for (const review of reviewInputs) {
+    await prisma.productReview.upsert({
+      where: { orderItemId: review.orderItemId },
+      update: {
+        rating: review.rating,
+        review: review.review,
+      },
+      create: review,
+    });
+  }
+
+  const reviewedProductIds = [...new Set(reviewInputs.map((review) => review.productId))];
+  for (const productId of reviewedProductIds) {
+    const aggregate = await prisma.productReview.aggregate({
+      where: { productId },
+      _count: { id: true },
+      _avg: { rating: true },
+    });
+
+    await prisma.product.update({
+      where: { id: productId },
+      data: {
+        total_reviews: aggregate._count.id,
+        average_rating: aggregate._avg.rating ?? 0,
+      },
+    });
+  }
+}
+
+async function seedChats(sellers: SeedUser[], buyers: SeedUser[]) {
+  for (const [index, buyer] of buyers.entries()) {
+    const seller = sellers[index % sellers.length];
+    const room = await prisma.chatRoom.upsert({
+      where: { buyerId_sellerId: { buyerId: buyer.id, sellerId: seller.id } },
+      update: {},
+      create: { buyerId: buyer.id, sellerId: seller.id },
+    });
+
+    const existingMessages = await prisma.chatMessage.count({ where: { chatRoomId: room.id } });
+    if (existingMessages > 0) {
+      continue;
+    }
+
+    await prisma.chatMessage.createMany({
+      data: [
+        {
+          chatRoomId: room.id,
+          senderId: buyer.id,
+          message: "Hi, is this item still available?",
+          is_delivered: true,
+          type: "TEXT",
+        },
+        {
+          chatRoomId: room.id,
+          senderId: seller.id,
+          message: "Yes, it is available and ready to ship.",
+          is_delivered: true,
+          is_read: true,
+          type: "TEXT",
+        },
+      ],
     });
   }
 }
@@ -628,6 +785,70 @@ async function upsertLegalDocument(type: "TERMS_AND_CONDITIONS" | "PRIVACY_POLIC
     await prisma.legalDocument.update({ where: { id: existing.id }, data: { content } });
   } else {
     await prisma.legalDocument.create({ data: { type, content } });
+  }
+}
+
+async function seedFaqs() {
+  const faqGroups = [
+    {
+      name: "Buying",
+      faqs: [
+        {
+          question: "How do I place an order?",
+          answer: "Add products to your cart or use Buy Now from the product details page, review the checkout summary, and complete payment through Stripe.",
+        },
+        {
+          question: "Can I buy from multiple sellers?",
+          answer: "Yes. Cart checkout groups selected items by seller and creates separate orders for each seller after payment.",
+        },
+      ],
+    },
+    {
+      name: "Selling",
+      faqs: [
+        {
+          question: "What do I need before listing products?",
+          answer: "Complete Stripe onboarding and configure delivery settings before publishing products for buyers.",
+        },
+        {
+          question: "Where can I see product orders?",
+          answer: "Sellers can view received orders and filter orders associated with a specific product from the seller order endpoints.",
+        },
+      ],
+    },
+    {
+      name: "Returns",
+      faqs: [
+        {
+          question: "How do returns work?",
+          answer: "Buyers can request a return for delivered order items. Sellers review the request and update the return status.",
+        },
+      ],
+    },
+  ];
+
+  for (const group of faqGroups) {
+    let category = await prisma.faqCategory.findFirst({ where: { name: group.name } });
+    if (!category) {
+      category = await prisma.faqCategory.create({ data: { name: group.name } });
+    }
+
+    for (const faq of group.faqs) {
+      const existing = await prisma.faq.findFirst({
+        where: { categoryId: category.id, question: faq.question },
+      });
+
+      if (existing) {
+        await prisma.faq.update({ where: { id: existing.id }, data: faq });
+      } else {
+        await prisma.faq.create({
+          data: {
+            categoryId: category.id,
+            ...faq,
+          },
+        });
+      }
+    }
   }
 }
 

@@ -233,6 +233,7 @@ export class ProductService {
         if (andFilters.length > 0) {
             whereClause.AND = andFilters;
         }
+        this.excludeViewerProducts(whereClause, userId);
 
         const orderBy = this.getProductOrderBy(sort);
 
@@ -304,6 +305,10 @@ export class ProductService {
         });
 
         if (!product) {
+            throw new NotFoundException(`Product with ID ${id} not found`);
+        }
+
+        if (userId && product.userId === userId) {
             throw new NotFoundException(`Product with ID ${id} not found`);
         }
 
@@ -768,6 +773,7 @@ export class ProductService {
                 id: { not: productId },
                 categoryId,
                 status: "ACTIVE",
+                ...(userId ? { userId: { not: userId } } : {}),
             },
             take: 4,
             orderBy: [{ average_rating: "desc" }, { createdAt: "desc" }],
@@ -780,6 +786,20 @@ export class ProductService {
 
         const wishlistedIds = await this.getWishlistedProductIds(userId, products.map((product) => product.id));
         return this.withWishlistState(products, wishlistedIds);
+    }
+
+    private excludeViewerProducts(whereClause: any, userId?: number) {
+        if (!userId) {
+            return;
+        }
+
+        const existingAnd = Array.isArray(whereClause.AND)
+            ? whereClause.AND
+            : whereClause.AND
+              ? [whereClause.AND]
+              : [];
+
+        whereClause.AND = [...existingAnd, { userId: { not: userId } }];
     }
 
     private assertReviewTextWithinWordLimit(review?: string) {

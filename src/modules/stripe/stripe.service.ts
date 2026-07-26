@@ -4,7 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import stripeConfig, { StripeConfig } from "src/config/stripe.config";
 import Stripe from "stripe";
 import { OrderService } from "../order/order.service";
-import { CreateStripeCheckoutSessionDto } from "../order/dtos/checkout-flow.dto";
+import { CreateBuyNowCheckoutSessionDto, CreateStripeCheckoutSessionDto } from "../order/dtos/checkout-flow.dto";
 
 @Injectable()
 export class StripeService {
@@ -112,6 +112,7 @@ export class StripeService {
 
         const checkoutSummary = await this.orderService.getCheckoutSummary(userId, {
             sellerIds: dto.sellerIds,
+            cartItemIds: dto.cartItemIds,
             addressId: dto.addressId,
             couponCode: dto.couponCode,
         });
@@ -146,7 +147,81 @@ export class StripeService {
                 userId: String(userId),
                 addressId: String(dto.addressId),
                 sellerIds: dto.sellerIds?.join(",") ?? "",
+                cartItemIds: dto.cartItemIds?.join(",") ?? "",
                 couponCode: dto.couponCode ?? "",
+                total: String(amountTotal),
+            },
+        });
+
+        return {
+            session_id: session.id,
+            url: session.url,
+            currency: "eur",
+            amount_total: amountTotal,
+            checkout_summary: checkoutSummary,
+        };
+    }
+
+    async createBuyNowCheckoutSession(userId: number, dto: CreateBuyNowCheckoutSessionDto) {
+        if (!dto.acceptedTerms) {
+            throw new BadRequestException("You must agree to the Terms & Conditions and Privacy Policy before payment.");
+        }
+        if (!dto.addressId && (!dto.shippingAddress || !dto.city || !dto.country)) {
+            throw new BadRequestException("Select a shipping address before payment.");
+        }
+
+        const user = await this.prismaService.baseUser.findUnique({
+            where: { id: userId },
+            select: { email: true },
+        });
+        if (!user) {
+            throw new NotFoundException(`User with ID ${userId} not found`);
+        }
+
+        const checkoutSummary = await this.orderService.getBuyNowCheckoutSummary(userId, dto);
+        const amountTotal = checkoutSummary.price_details.total;
+        if (amountTotal === null) {
+            throw new BadRequestException("Select a shipping address before payment.");
+        }
+        const amountInCents = Math.round(amountTotal * 100);
+        const item = checkoutSummary.seller_groups[0].items[0];
+
+        if (amountInCents <= 0) {
+            throw new BadRequestException("Checkout total must be greater than zero.");
+        }
+
+        const session = await this.stripe.checkout.sessions.create({
+            mode: "payment",
+            payment_method_types: ["card"],
+            success_url: dto.successUrl,
+            cancel_url: dto.cancelUrl,
+            customer_email: user.email,
+            client_reference_id: String(userId),
+            line_items: [
+                {
+                    price_data: {
+                        currency: "eur",
+                        product_data: {
+                            name: item.product.name,
+                            description: `Buy Now checkout for ${item.quantity} item(s)`,
+                            images: item.product.image_url ? [item.product.image_url] : undefined,
+                        },
+                        unit_amount: amountInCents,
+                    },
+                    quantity: 1,
+                },
+            ],
+            metadata: {
+                checkoutMode: "buy_now",
+                userId: String(userId),
+                productId: String(dto.productId),
+                variantId: dto.variantId ? String(dto.variantId) : "",
+                quantity: String(dto.quantity),
+                addressId: dto.addressId ? String(dto.addressId) : "",
+                shippingAddress: dto.shippingAddress ?? "",
+                city: dto.city ?? "",
+                postalCode: dto.postalCode ?? "",
+                country: dto.country ?? "",
                 total: String(amountTotal),
             },
         });
@@ -238,6 +313,11 @@ export class StripeService {
     }
 
     private async handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
+        if (session.metadata?.checkoutMode === "buy_now") {
+            await this.handleBuyNowCheckoutSessionCompleted(session);
+            return;
+        }
+
         const userId = Number(session.metadata?.userId);
         const addressId = Number(session.metadata?.addressId);
         const sellerIds = session.metadata?.sellerIds
@@ -246,6 +326,7 @@ export class StripeService {
                   .map((sellerId) => Number(sellerId.trim()))
                   .filter((sellerId) => Number.isInteger(sellerId) && sellerId > 0)
             : undefined;
+        const cartItemIds = this.numberArrayFromMetadata(session.metadata?.cartItemIds);
         const couponCode = session.metadata?.couponCode || undefined;
 
         if (!userId || !addressId) {
@@ -256,6 +337,7 @@ export class StripeService {
         try {
             await this.orderService.checkoutFromCart(userId, {
                 sellerIds,
+                cartItemIds,
                 addressId,
                 couponCode,
                 acceptedTerms: true,
@@ -269,6 +351,58 @@ export class StripeService {
             this.logger.error(`Failed to create orders for checkout session ${session.id}`, err?.stack ?? err);
             throw err;
         }
+    }
+
+    private async handleBuyNowCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
+        const userId = Number(session.metadata?.userId);
+        const productId = Number(session.metadata?.productId);
+        const quantity = Number(session.metadata?.quantity);
+        const variantId = this.numberFromMetadata(session.metadata?.variantId);
+        const addressId = this.numberFromMetadata(session.metadata?.addressId);
+
+        if (!userId || !productId || !quantity) {
+            this.logger.warn(`Skipping buy_now checkout.session.completed ${session.id}: missing userId, productId, or quantity metadata.`);
+            return;
+        }
+
+        try {
+            await this.orderService.checkoutBuyNow(userId, {
+                productId,
+                variantId,
+                quantity,
+                addressId,
+                shippingAddress: this.stringFromMetadata(session.metadata?.shippingAddress),
+                city: this.stringFromMetadata(session.metadata?.city),
+                postalCode: this.stringFromMetadata(session.metadata?.postalCode),
+                country: this.stringFromMetadata(session.metadata?.country),
+                acceptedTerms: true,
+                stripeCheckoutSessionId: session.id,
+            });
+            this.logger.log(`Created Buy Now order for paid checkout session ${session.id}.`);
+        } catch (err) {
+            this.logger.error(`Failed to create Buy Now order for checkout session ${session.id}`, err?.stack ?? err);
+            throw err;
+        }
+    }
+
+    private numberFromMetadata(value?: string | null) {
+        if (!value) {
+            return undefined;
+        }
+        const numberValue = Number(value);
+        return Number.isInteger(numberValue) && numberValue > 0 ? numberValue : undefined;
+    }
+
+    private numberArrayFromMetadata(value?: string | null) {
+        const ids = value
+            ?.split(",")
+            .map((item) => Number(item.trim()))
+            .filter((item) => Number.isInteger(item) && item > 0);
+        return ids?.length ? ids : undefined;
+    }
+
+    private stringFromMetadata(value?: string | null) {
+        return value?.trim() || undefined;
     }
 
     /**

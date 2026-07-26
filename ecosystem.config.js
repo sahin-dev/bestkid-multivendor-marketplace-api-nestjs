@@ -7,6 +7,7 @@ module.exports = {
       cwd: __dirname,
       instances: 1,
       exec_mode: 'fork',
+      node_args: '--trace-deprecation',
       watch: false,
       env: {
         NODE_ENV: 'development',
