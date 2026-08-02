@@ -2,6 +2,7 @@ model Product {
   id                  Int           @id @default(autoincrement())
   name                String
   description         String?
+  brand               String?
   original_price      Float
   discounted_price    Float?
   discount_percentage Float?
@@ -24,7 +25,7 @@ model Product {
   authentication_status AuthenticationStatus @default(PENDING)
   approved_at         DateTime?
   rejected_at         DateTime?
-  variants            ProductVariant[]
+  sold_at             DateTime?
   authentication_requests ProductAuthenticationRequest[]
   subCategory         SubCategory     @relation(fields: [subCategoryId], references: [id])
   category            Category        @relation(fields: [categoryId], references: [id])
@@ -45,6 +46,7 @@ model ProductAuthenticationRequest {
   verdict         String?
   certificateUrl  String?
   reportUrl       String?
+  image_urls      String[]
   submittedAt     DateTime?
   completedAt     DateTime?
   lastError        String?
@@ -58,19 +60,6 @@ model ProductAuthenticationRequest {
   @@index([productId])
   @@index([externalOrderId])
   @@map("product_authentication_requests")
-}
-
-model ProductVariant {
-  id          Int      @id @default(autoincrement())
-  productId   Int
-  variantName String
-  price       Float
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  product     Product  @relation(fields: [productId], references: [id])
-  cart_listed CartItem[]
-  order_items OrderItem[]
 }
 
 model ProductReview {
@@ -101,7 +90,7 @@ enum Condition {
 enum ProductStatus {
   ACTIVE
   INACTIVE
-  OUT_OF_STOCK
+  SOLD
 }
 
 enum AuthenticationStatus {

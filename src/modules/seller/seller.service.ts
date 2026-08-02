@@ -118,7 +118,7 @@ export class SellerService {
                 paid_at: order.createdAt,
                 status: order.status,
                 amount: order.total,
-                item_count: order.items.reduce((sum, item) => sum + item.quantity, 0),
+                item_count: order.items.length,
             })),
             meta: {
                 total,

@@ -1,0 +1,266 @@
+{
+  "info": {
+    "name": "BestKid Chat (Socket.IO)",
+    "description": "Real-time chat: REST setup calls + a full reference for every Socket.IO event.\n\n**Important limitation:** Postman's collection JSON format does not currently support saving/importing live Socket.IO request configurations (open request: postmanlabs/postman-app-support#11252). So this collection is split in two:\n\n1. **REST APIs** — real, executable requests (find/create room, list rooms, load messages). Run these directly in Postman.\n2. **Socket.IO — Client Emits** / **Socket.IO — Server Emits (Listen)** — documentation-only reference items. Each one's body shows the exact JSON payload for that event; the description explains direction and server behavior. Copy these into Postman's native Socket.IO Request UI (New → Socket.IO Request) since that UI can't be pre-populated from a collection file.\n\n**Connecting the Socket.IO request in Postman:**\n1. New → Socket.IO Request.\n2. URL: `{{baseUrl}}`.\n3. Auth tab: set `auth.token` to `{{accessToken}}` (or add header `Authorization: Bearer {{accessToken}}`).\n4. Connect, then use the Message/Listeners panels with the event names and payloads documented below.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000", "type": "string" },
+    { "key": "accessToken", "value": "", "type": "string" },
+    { "key": "sellerId", "value": "7", "type": "string" },
+    { "key": "chatRoomId", "value": "11", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "REST APIs",
+      "item": [
+        {
+          "name": "Find Or Create Chat Room",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Accept", "value": "application/json" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/chat/rooms",
+              "host": ["{{baseUrl}}"],
+              "path": ["chat", "rooms"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sellerId\": {{sellerId}}\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "Creates or returns an existing chat room between the authenticated buyer and seller."
+          },
+          "response": []
+        },
+        {
+          "name": "List My Chat Rooms",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/chat/rooms?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["chat", "rooms"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            },
+            "description": "Loads the authenticated user's conversation list."
+          },
+          "response": []
+        },
+        {
+          "name": "Load Room Messages",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Accept", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/chat/rooms/{{chatRoomId}}/messages?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["chat", "rooms", "{{chatRoomId}}", "messages"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            },
+            "description": "Loads message history for a room before real-time messages arrive."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Socket.IO — Client Emits",
+      "description": "Events the client sends to the server. Reference only — paste the event name + body into Postman's Socket.IO Request 'Message' panel after connecting (see collection description).",
+      "item": [
+        {
+          "name": "[EMIT] join_room",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chatRoomId\": {{chatRoomId}}\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "**Event name:** `join_room`\n\nJoin a chat room to receive real-time messages, typing events, and read receipts for that room.\n\n**Server behavior:**\n- Checks authenticated user.\n- Verifies the user has access to the room.\n- Joins Socket.IO room `room_<chatRoomId>`.\n- If the user lacks access, server emits `error`."
+          },
+          "response": []
+        },
+        {
+          "name": "[EMIT] leave_room",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chatRoomId\": {{chatRoomId}}\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "**Event name:** `leave_room`\n\nLeave a chat room when the user closes the chat screen or switches rooms.\n\n**Server behavior:** removes the socket from `room_<chatRoomId>`."
+          },
+          "response": []
+        },
+        {
+          "name": "[EMIT] send_message (TEXT)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chatRoomId\": {{chatRoomId}},\n  \"message\": \"Hello!\",\n  \"type\": \"TEXT\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "**Event name:** `send_message`\n\nSend a new text chat message.\n\n**Payload:**\n```\n{\n  chatRoomId: number;\n  message?: string;\n  file_url?: string;\n  type: \"TEXT\" | \"IMAGE\" | \"FILE\";\n}\n```\n\n**Server behavior:**\n- Verifies authenticated user.\n- Verifies user belongs to the room.\n- Saves message in database.\n- Broadcasts saved message to everyone in the room via `new_message`.\n\n**Important:** Treat `new_message` as confirmation the message was saved/delivered — `send_message` does not currently use acknowledgement callbacks."
+          },
+          "response": []
+        },
+        {
+          "name": "[EMIT] send_message (IMAGE/FILE)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chatRoomId\": {{chatRoomId}},\n  \"message\": \"Please check this file\",\n  \"file_url\": \"https://example.com/uploads/file.png\",\n  \"type\": \"IMAGE\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "**Event name:** `send_message`\n\nSend an image/file message. Upload the file first via your storage/upload endpoint, then send the resulting `file_url` here.\n\n`type` is `\"IMAGE\"` or `\"FILE\"`."
+          },
+          "response": []
+        },
+        {
+          "name": "[EMIT] mark_read",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chatRoomId\": {{chatRoomId}}\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "**Event name:** `mark_read`\n\nMark all unread messages in a room as read.\n\n**Server behavior:** marks messages as read where `chatRoomId` matches, sender is not the current user, and `is_read` is false. Broadcasts `messages_read` to everyone in the room."
+          },
+          "response": []
+        },
+        {
+          "name": "[EMIT] typing (started)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chatRoomId\": {{chatRoomId}},\n  \"isTyping\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "**Event name:** `typing`\n\nShow a typing indicator to the other participant. Use debounce/throttle on the client; emit `isTyping: false` after ~1s of no input (see `[EMIT] typing (stopped)`).\n\n**Server behavior:** relays typing state to other users in the room via `user_typing`."
+          },
+          "response": []
+        },
+        {
+          "name": "[EMIT] typing (stopped)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chatRoomId\": {{chatRoomId}},\n  \"isTyping\": false\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "**Event name:** `typing`\n\nEmit once the user stops typing (typically after ~1s of input inactivity)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Socket.IO — Server Emits (Listen)",
+      "description": "Events the server pushes to the client. Reference only — add these event names as Listeners in Postman's Socket.IO Request UI after connecting.",
+      "item": [
+        {
+          "name": "[LISTEN] new_message",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": 101,\n  \"chatRoomId\": 11,\n  \"senderId\": 7,\n  \"message\": \"Hello!\",\n  \"file_url\": null,\n  \"type\": \"TEXT\",\n  \"is_read\": false,\n  \"is_delivered\": true,\n  \"createdAt\": \"2026-07-27T10:15:30.000Z\",\n  \"updatedAt\": \"2026-07-27T10:15:30.000Z\",\n  \"sender\": {\n    \"id\": 7,\n    \"profile\": {\n      \"full_name\": \"Jane Seller\",\n      \"avatar_url\": null\n    }\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "**Event name:** `new_message`\n\nEmitted after the server successfully saves a message from `send_message`. Received by everyone joined to the room.\n\n**Frontend use:**\n- Add message to the message list.\n- Update last message in the chat room list.\n- Scroll chat to bottom if the user is viewing the active room."
+          },
+          "response": []
+        },
+        {
+          "name": "[LISTEN] messages_read",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chatRoomId\": 11,\n  \"readerId\": 7\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "**Event name:** `messages_read`\n\nEmitted after a user emits `mark_read`.\n\n**Frontend use:**\n- Mark messages as read in the UI.\n- Hide unread badge for the room if `readerId` is the current user.\n- Show read status for sent messages if `readerId` is the other participant."
+          },
+          "response": []
+        },
+        {
+          "name": "[LISTEN] user_typing",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"chatRoomId\": 11,\n  \"userId\": 7,\n  \"isTyping\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "**Event name:** `user_typing`\n\nEmitted after a user emits `typing`.\n\n**Frontend use:**\n- Show \"Typing...\" when `isTyping` is true.\n- Hide the indicator when `isTyping` is false.\n- Ignore the event if `userId` is the current user."
+          },
+          "response": []
+        },
+        {
+          "name": "[LISTEN] error",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{baseUrl}}", "host": ["{{baseUrl}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "\"You do not have access to this room\"",
+              "options": { "raw": { "language": "json" } }
+            },
+            "description": "**Event name:** `error`\n\nSocket-level error messages from the chat server. Payload is a plain string.\n\n**Possible messages:**\n- `You do not have access to this room`\n- `Failed to send message`\n- `Failed to mark read`\n\n**Frontend use:** show a toast/message to the user and stop any optimistic loading state if sending a message failed."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

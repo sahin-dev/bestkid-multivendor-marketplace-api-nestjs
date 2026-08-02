@@ -19,7 +19,6 @@ export class LegitGrailsService {
             include: {
                 category: true,
                 subCategory: true,
-                variants: true,
                 user: {
                     select: {
                         id: true,
@@ -36,10 +35,6 @@ export class LegitGrailsService {
 
         if (!isAdmin && product.userId !== actorId) {
             throw new ForbiddenException("You do not have permission to submit this product for authentication");
-        }
-
-        if (!product.image_urls?.length) {
-            throw new BadRequestException("Add product images before submitting this product for authentication.");
         }
 
         const activeRequest = await this.prismaService.productAuthenticationRequest.findFirst({
@@ -61,17 +56,13 @@ export class LegitGrailsService {
                 id: product.id,
                 name: product.name,
                 description: product.description,
+                brand: dto.brand,
                 condition: product.condition,
                 category: product.category?.name,
                 subCategory: product.subCategory?.name,
                 original_price: product.original_price,
                 discounted_price: product.discounted_price,
-                image_urls: product.image_urls,
-                variants: product.variants.map((variant) => ({
-                    id: variant.id,
-                    name: variant.variantName,
-                    price: variant.price,
-                })),
+                image_urls: dto.image_urls,
             },
             seller: {
                 id: product.user.id,
@@ -83,11 +74,17 @@ export class LegitGrailsService {
             turnaround: dto.turnaround,
         };
 
+        await this.prismaService.product.update({
+            where: { id: productId },
+            data: { brand: dto.brand },
+        });
+
         const localRequest = await this.prismaService.productAuthenticationRequest.create({
             data: {
                 productId,
                 provider: "LEGITGRAILS",
                 status: "SUBMITTING",
+                image_urls: dto.image_urls,
                 rawRequest: requestPayload,
             },
         });
@@ -132,6 +129,7 @@ export class LegitGrailsService {
             select: {
                 id: true,
                 userId: true,
+                brand: true,
                 is_authenticated: true,
                 authentication_status: true,
                 approved_at: true,

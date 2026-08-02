@@ -337,6 +337,8 @@ async function seedProducts(
         await prisma.product.update({
           where: { id: existing.id },
           data: {
+            // Only a VERIFIED item can be ACTIVE — don't touch products already SOLD.
+            status: existing.status === "SOLD" ? existing.status : isAuthenticated ? "ACTIVE" : "INACTIVE",
             authentication_status: authenticationStatus,
             is_authenticated: isAuthenticated,
             approved_at: authenticationStatus === "VERIFIED" ? (existing.approved_at ?? moderatedAt) : null,
@@ -352,10 +354,12 @@ async function seedProducts(
 
       const originalPrice = 18 + index * 7;
       const discountedPrice = index % 2 === 0 ? originalPrice - 3 : null;
+      const brands = ["Nike", "Adidas", "Zara Kids", "H&M Kids"];
       const product = await prisma.product.create({
         data: {
           name,
-          description: `Seeded product for ${seller.profile?.full_name ?? "seller"}`,
+          description: `Seeded product for ${seller.profile?.full_name ?? "seller"}. Size: ${index % 2 === 0 ? "M" : "L"}.`,
+          brand: brands[index % brands.length],
           original_price: originalPrice,
           discounted_price: discountedPrice,
           discount_percentage: discountedPrice ? Math.round(((originalPrice - discountedPrice) / originalPrice) * 100) : null,
@@ -364,17 +368,12 @@ async function seedProducts(
           subCategoryId: subCategory.id,
           userId: seller.id,
           condition: index % 2 === 0 ? "NEW" : "USED",
-          status: "ACTIVE",
+          // Only a VERIFIED item can be ACTIVE — mirrors the LegitGrails authentication gate.
+          status: isAuthenticated ? "ACTIVE" : "INACTIVE",
           is_authenticated: isAuthenticated,
           authentication_status: authenticationStatus,
           approved_at: authenticationStatus === "VERIFIED" ? moderatedAt : null,
           rejected_at: authenticationStatus === "NOT_VERIFIED" ? moderatedAt : null,
-          variants: {
-            create: [
-              { variantName: "Small", price: originalPrice },
-              { variantName: "Large", price: originalPrice + 4 },
-            ],
-          },
         },
       });
 
@@ -421,9 +420,8 @@ async function seedOrdersAndReturns(
     for (let orderIndex = 0; orderIndex < 5; orderIndex++) {
       const buyer = buyers[(sellerIndex + orderIndex) % buyers.length];
       const product = sellerProducts[orderIndex % sellerProducts.length];
-      const quantity = (orderIndex % 2) + 1;
       const deliveryCost = orderIndex % 2 === 0 ? 4.99 : 12.99;
-      const total = product.price * quantity + deliveryCost;
+      const total = product.price + deliveryCost;
       const createdAt = new Date();
       createdAt.setDate(createdAt.getDate() - orderIndex * 3 - sellerIndex);
 
@@ -446,7 +444,6 @@ async function seedOrdersAndReturns(
             create: [
               {
                 productId: product.id,
-                quantity,
                 price: product.price,
               },
             ],
@@ -495,35 +492,15 @@ async function seedBuyerCommerce(
       allProducts[(buyerIndex + 3) % allProducts.length],
     ].filter(Boolean);
 
-    for (const [itemIndex, product] of selectedProducts.entries()) {
-      const variant = await prisma.productVariant.findFirst({
-        where: { productId: product.id },
-        orderBy: { id: "asc" },
+    for (const product of selectedProducts) {
+      await prisma.cartItem.upsert({
+        where: { cartId_productId: { cartId: cart.id, productId: product.id } },
+        update: {},
+        create: {
+          cartId: cart.id,
+          productId: product.id,
+        },
       });
-
-      if (!variant) {
-        continue;
-      }
-
-      const existingCartItem = await prisma.cartItem.findFirst({
-        where: { cartId: cart.id, productId: product.id, variantId: variant.id },
-      });
-
-      if (existingCartItem) {
-        await prisma.cartItem.update({
-          where: { id: existingCartItem.id },
-          data: { quantity: itemIndex + 1 },
-        });
-      } else {
-        await prisma.cartItem.create({
-          data: {
-            cartId: cart.id,
-            productId: product.id,
-            variantId: variant.id,
-            quantity: itemIndex + 1,
-          },
-        });
-      }
 
       await prisma.wishlistItem.upsert({
         where: { userId_productId: { userId: buyer.id, productId: product.id } },

@@ -1,8 +1,7 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { CreateProductDto, ProductVariantInputDto } from "./dtos/create-product.dto";
+import { CreateProductDto } from "./dtos/create-product.dto";
 import { UpdateProductDto } from "./dtos/update-product.dto";
-import { CreateVariantDto } from "./dtos/create-variant.dto";
 import { CreateReviewDto } from "./dtos/create-review.dto";
 import { ProductQueryDto, ProductSort } from "./dtos/product-query.dto";
 import { AuthenticationStatus, OrderStatus, ProductStatus } from "generated/prisma/client";
@@ -39,28 +38,17 @@ export class ProductService {
         await this.validateCategoryPair(dto.categoryId, dto.subCategoryId);
 
         const discountData = this.calculateDiscounts(dto.original_price, dto.discounted_price, dto.discount_percentage);
-        const effectivePrice = discountData.discounted_price ?? dto.original_price;
-        const variantInputs = this.normalizeVariantInputs(dto.variants, dto.variant_names, effectivePrice);
-        const { variants, variant_names, ...productData } = dto;
 
         return this.prismaService.product.create({
             data: {
-                ...productData,
+                ...dto,
                 ...discountData,
                 image_urls: dto.image_urls ?? [],
                 userId,
-                ...(variantInputs.length
-                    ? {
-                          variants: {
-                              create: variantInputs,
-                          },
-                      }
-                    : {}),
             },
             include: {
                 category: true,
                 subCategory: true,
-                variants: true,
             },
         });
     }
@@ -86,7 +74,6 @@ export class ProductService {
                 include: {
                     category: true,
                     subCategory: true,
-                    variants: true,
                 },
             }),
             this.prismaService.product.count({ where: whereClause }),
@@ -136,7 +123,7 @@ export class ProductService {
         this.assertCanMutateProduct(product, sellerId, isAdmin);
 
         if (status === ProductStatus.ACTIVE) {
-            await this.assertCanPublishProduct(product.userId);
+            await this.assertCanPublishProduct(product.userId, product.authentication_status);
         }
 
         const updated = await this.prismaService.product.update({
@@ -162,7 +149,6 @@ export class ProductService {
             sort = ProductSort.LATEST,
             minRating,
             discountedOnly,
-            size,
         } = query;
         const skip = (page - 1) * limit;
 
@@ -204,12 +190,6 @@ export class ProductService {
             whereClause.discounted_price = { not: null };
         }
 
-        if (size) {
-            whereClause.variants = {
-                some: { variantName: { contains: size, mode: "insensitive" } },
-            };
-        }
-
         if (minPrice !== undefined || maxPrice !== undefined) {
             const discountedPrice: any = { not: null };
             const originalPrice: any = {};
@@ -245,7 +225,6 @@ export class ProductService {
                 include: {
                         category: true,
                         subCategory: true,
-                        variants: true,
                         user: {
                             select: {
                                 id: true,
@@ -288,7 +267,6 @@ export class ProductService {
                 },
                 category: true,
                 subCategory: true,
-                variants: true,
                 reviews: {
                     orderBy: { createdAt: "desc" },
                     take: 5,
@@ -355,7 +333,7 @@ export class ProductService {
         }
 
         if (dto.status === ProductStatus.ACTIVE) {
-            await this.assertCanPublishProduct(existingProduct.userId);
+            await this.assertCanPublishProduct(existingProduct.userId, existingProduct.authentication_status);
         }
 
         let discountData = {};
@@ -371,41 +349,13 @@ export class ProductService {
             discountData = this.calculateDiscounts(orig, disc, perc);
         }
 
-        const finalPrice =
-            (discountData as { discounted_price?: number | null }).discounted_price ??
-            dto.discounted_price ??
-            existingProduct.discounted_price ??
-            dto.original_price ??
-            existingProduct.original_price;
-        const variantInputs = this.normalizeVariantInputs(dto.variants, dto.variant_names, finalPrice);
-        const { variants, variant_names, replace_variants, ...productData } = dto;
-
-        return this.prismaService.$transaction(async (tx) => {
-            if (variantInputs.length > 0) {
-                const shouldReplace = replace_variants !== false;
-                if (shouldReplace) {
-                    await tx.productVariant.deleteMany({
-                        where: {
-                            productId: id,
-                            order_items: { none: {} },
-                            cart_listed: { none: {} },
-                        },
-                    });
-                }
-
-                await tx.productVariant.createMany({
-                    data: variantInputs.map((variant) => ({ ...variant, productId: id })),
-                });
-            }
-
-            return tx.product.update({
-                where: { id },
-                data: {
-                    ...productData,
-                    ...discountData,
-                },
-                include: this.getSellerProductInclude(),
-            });
+        return this.prismaService.product.update({
+            where: { id },
+            data: {
+                ...dto,
+                ...discountData,
+            },
+            include: this.getSellerProductInclude(),
         });
     }
 
@@ -420,11 +370,6 @@ export class ProductService {
             throw new BadRequestException("Product cannot be deleted after it has been ordered. Mark it inactive instead.");
         }
 
-        // Delete variants and reviews first to prevent constraint violations
-        await this.prismaService.productVariant.deleteMany({
-            where: { productId: id },
-        });
-
         await this.prismaService.productReview.deleteMany({
             where: { productId: id },
         });
@@ -432,42 +377,6 @@ export class ProductService {
         return this.prismaService.product.delete({
             where: { id },
         });
-    }
-
-    async createVariant(productId: number, dto: CreateVariantDto, actorId?: number, isAdmin = false) {
-        const product = await this.getProductForMutation(productId);
-        if (actorId !== undefined) {
-            this.assertCanMutateProduct(product, actorId, isAdmin);
-        }
-
-        return this.prismaService.productVariant.create({
-            data: {
-                ...dto,
-                productId,
-            },
-        });
-    }
-
-    async deleteVariant(productId: number, variantId: number, actorId?: number, isAdmin = false) {
-        const product = await this.getProductForMutation(productId);
-        if (actorId !== undefined) {
-            this.assertCanMutateProduct(product, actorId, isAdmin);
-        }
-
-        const variant = await this.prismaService.productVariant.findFirst({
-            where: { id: variantId, productId },
-        });
-
-        if (!variant) {
-            throw new NotFoundException(`Variant with ID ${variantId} not found under Product ${productId}`);
-        }
-
-        const orderItemCount = await this.prismaService.orderItem.count({ where: { variantId } });
-        if (orderItemCount > 0) {
-            throw new BadRequestException("Variant cannot be deleted after it has been ordered.");
-        }
-
-        return this.prismaService.productVariant.delete({ where: { id: variantId } });
     }
 
     async createReview(productId: number, userId: number, dto: CreateReviewDto) {
@@ -780,7 +689,6 @@ export class ProductService {
             include: {
                 category: true,
                 subCategory: true,
-                variants: true,
             },
         });
 
@@ -838,16 +746,25 @@ export class ProductService {
             });
         }
 
-        if ((requestedStatus ?? ProductStatus.INACTIVE) === ProductStatus.ACTIVE && !readiness.delivery_configured) {
+        if ((requestedStatus ?? ProductStatus.INACTIVE) === ProductStatus.ACTIVE) {
+            if (!readiness.delivery_configured) {
+                throw new ForbiddenException({
+                    code: "DELIVERY_INFORMATION_MISSING",
+                    message: "Complete delivery settings before making products available for purchase.",
+                    readiness,
+                });
+            }
+
+            // A brand-new product can never already be VERIFIED — it must be created first,
+            // then submitted to LegitGrails, then flipped to ACTIVE once authenticated.
             throw new ForbiddenException({
-                code: "DELIVERY_INFORMATION_MISSING",
-                message: "Complete delivery settings before making products available for purchase.",
-                readiness,
+                code: "AUTHENTICATION_REQUIRED",
+                message: "New listings must be submitted for LegitGrails authentication before they can go live. Create it as INACTIVE, then activate it once verified.",
             });
         }
     }
 
-    private async assertCanPublishProduct(sellerId: number) {
+    private async assertCanPublishProduct(sellerId: number, authenticationStatus: AuthenticationStatus) {
         const readiness = await this.getSellerProductReadiness(sellerId);
         if (!readiness.stripe_connected) {
             throw new ForbiddenException({
@@ -861,6 +778,12 @@ export class ProductService {
                 code: "DELIVERY_INFORMATION_MISSING",
                 message: "Complete delivery settings before publishing products.",
                 readiness,
+            });
+        }
+        if (authenticationStatus !== AuthenticationStatus.VERIFIED) {
+            throw new ForbiddenException({
+                code: "AUTHENTICATION_REQUIRED",
+                message: "This item must be verified by LegitGrails before it can be listed for sale.",
             });
         }
     }
@@ -930,7 +853,6 @@ export class ProductService {
         return {
             category: true,
             subCategory: true,
-            variants: true,
             user: {
                 select: {
                     id: true,
@@ -949,37 +871,6 @@ export class ProductService {
         }
     }
 
-    private normalizeVariantInputs(
-        variants: ProductVariantInputDto[] | undefined,
-        variantNames: string[] | undefined,
-        fallbackPrice: number,
-    ) {
-        const inputs: ProductVariantInputDto[] = [
-            ...(variants ?? []),
-            ...(variantNames ?? []).map((variantName) => ({ variantName })),
-        ];
-        const seen = new Set<string>();
-        const normalized: { variantName: string; price: number }[] = [];
-
-        for (const input of inputs) {
-            const variantName = input.variantName?.trim();
-            if (!variantName) {
-                continue;
-            }
-            const key = variantName.toLowerCase();
-            if (seen.has(key)) {
-                continue;
-            }
-            seen.add(key);
-            normalized.push({
-                variantName,
-                price: input.price ?? fallbackPrice,
-            });
-        }
-
-        return normalized;
-    }
-
     private formatSellerProductCard(product: any) {
         return {
             id: product.id,
@@ -995,7 +886,6 @@ export class ProductService {
             discount_percentage: product.discount_percentage,
             average_rating: product.average_rating ?? 0,
             total_reviews: product.total_reviews,
-            variants: product.variants,
             createdAt: product.createdAt,
             updatedAt: product.updatedAt,
             actions: {
@@ -1013,10 +903,12 @@ export class ProductService {
             ...this.formatSellerProductCard(product),
             description: product.description,
             condition: product.condition,
+            brand: product.brand,
             is_authenticated: product.is_authenticated,
             authentication_status: product.authentication_status,
             approved_at: product.approved_at,
             rejected_at: product.rejected_at,
+            sold_at: product.sold_at,
             seller: product.user,
         };
     }

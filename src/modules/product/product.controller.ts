@@ -4,7 +4,6 @@ import { GetUser, Public, Roles } from "src/common/decorators";
 import { ProductService } from "./product.service";
 import { CreateProductDto } from "./dtos/create-product.dto";
 import { UpdateProductDto } from "./dtos/update-product.dto";
-import { CreateVariantDto } from "./dtos/create-variant.dto";
 import { CreateReviewDto } from "./dtos/create-review.dto";
 import { ProductQueryDto } from "./dtos/product-query.dto";
 import { UpdateProductAuthStatusDto } from "./dtos/update-product-auth-status.dto";
@@ -45,7 +44,6 @@ export class ProductController {
     @ApiQuery({ name: "sort", required: false, enum: ["latest", "price_low", "price_high", "rating", "popular"] })
     @ApiQuery({ name: "minRating", required: false, type: Number })
     @ApiQuery({ name: "discountedOnly", required: false, type: Boolean })
-    @ApiQuery({ name: "size", required: false, type: String })
     async findAllProducts(@Query() query: ProductQueryDto, @Req() req: Request) {
         const user = req["payload"] as { id: number } | undefined;
         return this.productService.findAllProducts(query, user?.id);
@@ -61,7 +59,7 @@ export class ProductController {
     @ApiQuery({ name: "subCategoryId", required: false, type: Number })
     @ApiQuery({ name: "sellerId", required: false, type: Number })
     @ApiQuery({ name: "search", required: false, type: String })
-    @ApiQuery({ name: "status", required: false, enum: ["ACTIVE", "INACTIVE", "OUT_OF_STOCK"] })
+    @ApiQuery({ name: "status", required: false, enum: ["ACTIVE", "INACTIVE", "SOLD"] })
     @ApiQuery({ name: "authenticationStatus", required: false, enum: AuthenticationStatus })
     @ApiQuery({ name: "approval", required: false, enum: AdminProductApprovalFilter })
     async findAllProductsAdmin(@Query() query: AdminProductQueryDto) {
@@ -96,7 +94,7 @@ export class ProductController {
     @Patch("seller/:id/status")
     @ApiBearerAuth("access-token")
     @Roles("USER", "ADMIN")
-    @ApiOperation({ summary: "Seller: mark a product active, inactive, or out of stock" })
+    @ApiOperation({ summary: "Seller: mark a product active (requires LegitGrails verification), inactive, or sold" })
     @ApiParam({ name: "id", type: Number })
     @ApiBody({ type: UpdateProductStatusDto })
     async updateSellerProductStatus(
@@ -150,34 +148,6 @@ export class ProductController {
     @ApiParam({ name: "id", type: Number })
     async deleteProduct(@Param("id", ParseIntPipe) id: number, @GetUser() payload: TokenPayload) {
         return this.productService.deleteProduct(id, payload.id, payload.role === "ADMIN");
-    }
-
-    @Post(":id/variants")
-    @ApiBearerAuth("access-token")
-    @Roles("ADMIN", "USER")
-    @ApiOperation({ summary: "Create a product variant", description: "Use variants for size/option-specific prices." })
-    @ApiParam({ name: "id", type: Number })
-    @ApiBody({ type: CreateVariantDto })
-    async createVariant(
-        @Param("id", ParseIntPipe) productId: number,
-        @Body() dto: CreateVariantDto,
-        @GetUser() payload: TokenPayload,
-    ) {
-        return this.productService.createVariant(productId, dto, payload.id, payload.role === "ADMIN");
-    }
-
-    @Delete(":id/variants/:variantId")
-    @ApiBearerAuth("access-token")
-    @Roles("ADMIN", "USER")
-    @ApiOperation({ summary: "Delete a product variant" })
-    @ApiParam({ name: "id", type: Number })
-    @ApiParam({ name: "variantId", type: Number })
-    async deleteVariant(
-        @Param("id", ParseIntPipe) productId: number,
-        @Param("variantId", ParseIntPipe) variantId: number,
-        @GetUser() payload: TokenPayload,
-    ) {
-        return this.productService.deleteVariant(productId, variantId, payload.id, payload.role === "ADMIN");
     }
 
     @Post(":id/reviews")

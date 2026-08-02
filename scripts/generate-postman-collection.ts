@@ -51,7 +51,7 @@ const knownEnums: Record<string, string[]> = {
   AdminProductApprovalFilter: ["ALL", "APPROVED", "REJECTED", "PENDING"],
   AuthenticationStatus: ["PENDING", "VERIFIED", "NOT_VERIFIED"],
   Condition: ["NEW", "USED", "REFURBISHED"],
-  ProductStatus: ["ACTIVE", "INACTIVE", "OUT_OF_STOCK"],
+  ProductStatus: ["ACTIVE", "INACTIVE", "SOLD"],
 };
 
 const applySwaggerResponseExamples =

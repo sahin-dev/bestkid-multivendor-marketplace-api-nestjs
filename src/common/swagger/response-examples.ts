@@ -112,20 +112,12 @@ const subCategoryExample = {
   updatedAt: '2026-07-09T10:00:00.000Z',
 };
 
-const variantExample = {
-  id: 10,
-  productId: 1,
-  variantName: 'S',
-  price: 18,
-  createdAt: '2026-07-09T10:15:30.000Z',
-  updatedAt: '2026-07-09T10:15:30.000Z',
-};
-
 const productBaseExample = {
   id: 1,
   name: 'Kids Cotton Hoodie - Soft Fit',
   description:
     'Comfortable and lightweight kids hoodie designed for everyday use.',
+  brand: 'Zara Kids',
   original_price: 21.99,
   discounted_price: 18,
   discount_percentage: 18,
@@ -138,10 +130,11 @@ const productBaseExample = {
   views: 12,
   total_reviews: 5,
   average_rating: 4.9,
-  is_authenticated: false,
-  authentication_status: 'PENDING',
-  approved_at: null,
+  is_authenticated: true,
+  authentication_status: 'VERIFIED',
+  approved_at: '2026-07-09T09:00:00.000Z',
   rejected_at: null,
+  sold_at: null,
   createdAt: '2026-07-09T10:15:30.000Z',
   updatedAt: '2026-07-09T10:15:30.000Z',
 };
@@ -150,7 +143,6 @@ const productWithRelationsExample = {
   ...productBaseExample,
   category: categoryExample,
   subCategory: subCategoryExample,
-  variants: [variantExample],
 };
 
 const publicProductExample = {
@@ -218,7 +210,6 @@ const publicProductDetailExample = {
   },
   category: categoryExample,
   subCategory: subCategoryExample,
-  variants: [variantExample],
   reviews: [
     {
       id: 15,
@@ -271,7 +262,6 @@ const sellerProductCardExample = {
   discount_percentage: 18,
   average_rating: 4.9,
   total_reviews: 5,
-  variants: [variantExample],
   createdAt: '2026-07-09T10:15:30.000Z',
   updatedAt: '2026-07-09T10:15:30.000Z',
   actions: {
@@ -288,10 +278,12 @@ const sellerProductDetailExample = {
   description:
     'Comfortable and lightweight kids hoodie designed for everyday use.',
   condition: 'NEW',
+  brand: 'Zara Kids',
   is_authenticated: false,
   authentication_status: 'PENDING',
   approved_at: null,
   rejected_at: null,
+  sold_at: null,
   seller: {
     id: 7,
     email: 'seller@example.com',
@@ -403,8 +395,6 @@ const cartItemExample = {
   id: 14,
   cartId: 3,
   productId: 1,
-  variantId: 10,
-  quantity: 1,
   createdAt: '2026-07-09T10:30:00.000Z',
   updatedAt: '2026-07-09T10:30:00.000Z',
 };
@@ -428,19 +418,12 @@ const cartExample = {
         {
           id: 14,
           productId: 1,
-          variantId: 10,
-          quantity: 1,
           price: 18,
           product: {
             id: 1,
             name: 'Kids Cotton Hoodie - Soft Fit',
             image_urls: ['https://cdn.bestkid.test/products/hoodie-front.png'],
             status: 'ACTIVE',
-          },
-          variant: {
-            id: 10,
-            variantName: 'S',
-            price: 18,
           },
         },
       ],
@@ -534,8 +517,6 @@ const chatMessageExample = {
 const orderItemExample = {
   id: 31,
   productId: 1,
-  variantId: 10,
-  quantity: 1,
   price: 260,
   line_total: 260,
   product: {
@@ -545,11 +526,6 @@ const orderItemExample = {
     image_url: 'https://cdn.bestkid.test/products/shoes-front.png',
     average_rating: 4.9,
     total_reviews: 128,
-  },
-  variant: {
-    id: 10,
-    variantName: 'S',
-    price: 260,
   },
   review: null,
   return_request: null,
@@ -582,7 +558,6 @@ const orderCardExample = {
       productId: 1,
       name: 'Kolev and Kolev - Soft Fit',
       image_url: 'https://cdn.bestkid.test/products/shoes-front.png',
-      quantity: 1,
       price: 260,
     },
   ],
@@ -641,8 +616,8 @@ const orderDetailExample = {
 
 const checkoutSummaryExample = {
   selected_seller_ids: [7],
-  selected_cart_item_ids: [31],
-  cart_item_count: 3,
+  selected_cart_item_ids: [31, 32],
+  cart_item_count: 2,
   seller_groups: [
     {
       seller: {
@@ -663,10 +638,8 @@ const checkoutSummaryExample = {
         {
           id: 31,
           productId: 1,
-          variantId: 10,
-          quantity: 2,
           price: 260,
-          line_total: 520,
+          line_total: 260,
           product: {
             id: 1,
             name: 'Kolev and Kolev - Soft Fit',
@@ -675,7 +648,20 @@ const checkoutSummaryExample = {
             categoryId: 1,
             subCategoryId: 2,
           },
-          variant: { id: 10, variantName: 'S', price: 260 },
+        },
+        {
+          id: 32,
+          productId: 2,
+          price: 260,
+          line_total: 260,
+          product: {
+            id: 2,
+            name: 'Kolev and Kolev - Soft Fit (Pair 2)',
+            image_urls: ['https://cdn.bestkid.test/products/shoes-front.png'],
+            image_url: 'https://cdn.bestkid.test/products/shoes-front.png',
+            categoryId: 1,
+            subCategoryId: 2,
+          },
         },
       ],
       subtotal: 520,
@@ -718,7 +704,6 @@ const buyNowCheckoutSummaryExample = {
         {
           ...checkoutSummaryExample.seller_groups[0].items[0],
           id: null,
-          quantity: 1,
           line_total: 260,
         },
       ],
@@ -759,6 +744,11 @@ const legitGrailsAuthenticationExample = {
   verdict: null,
   certificateUrl: null,
   reportUrl: null,
+  image_urls: [
+    'https://cdn.bestkid.test/verification/front.png',
+    'https://cdn.bestkid.test/verification/back.png',
+    'https://cdn.bestkid.test/verification/label.png',
+  ],
   submittedAt: '2026-07-23T09:30:00.000Z',
   completedAt: null,
   lastError: null,
@@ -780,15 +770,6 @@ const sellerOrderDetailExample = {
 const sellerOrderCardExample = {
   ...orderCardExample,
   buyer: orderDetailExample.buyer,
-  preview_items: [
-    {
-      ...orderCardExample.preview_items[0],
-      variant: {
-        id: 10,
-        variantName: 'S',
-      },
-    },
-  ],
   cancellation: null,
   timeline: sellerOrderDetailExample.timeline,
   actions: {
@@ -805,17 +786,11 @@ const sellerProductOrderCardExample = {
       productId: 1,
       name: 'Kolev and Kolev - Soft Fit',
       image_url: 'https://cdn.bestkid.test/products/shoes-front.png',
-      variant: {
-        id: 10,
-        variantName: 'S',
-        price: 260,
-      },
-      quantity: 1,
       price: 260,
       line_total: 260,
     },
   ],
-  matched_quantity: 1,
+  matched_item_count: 1,
 };
 
 const returnCardExample = {
@@ -832,8 +807,6 @@ const returnCardExample = {
     productId: 1,
     name: 'Kolev and Kolev - Soft Fit',
     image_url: 'https://cdn.bestkid.test/products/shoes-front.png',
-    variant: 'S',
-    quantity: 1,
     price: 260,
   },
 };
@@ -1355,15 +1328,6 @@ function getRouteSuccessExample(method: string, path: string) {
       message: 'Request successful',
       data: cartItemExample,
     },
-    'PATCH /cart/items/{itemId}': {
-      success: true,
-      statusCode: 200,
-      message: 'Request successful',
-      data: {
-        ...cartItemExample,
-        quantity: 2,
-      },
-    },
     'DELETE /cart/items/{itemId}': {
       success: true,
       statusCode: 200,
@@ -1851,6 +1815,7 @@ function getRouteSuccessExample(method: string, path: string) {
         product: {
           id: 1,
           userId: 7,
+          brand: 'Zara Kids',
           is_authenticated: false,
           authentication_status: 'PENDING',
           approved_at: null,
@@ -1922,18 +1887,6 @@ function getRouteSuccessExample(method: string, path: string) {
       statusCode: 200,
       message: 'Request successful',
       data: productBaseExample,
-    },
-    'POST /products/{id}/variants': {
-      success: true,
-      statusCode: 201,
-      message: 'Request successful',
-      data: variantExample,
-    },
-    'DELETE /products/{id}/variants/{variantId}': {
-      success: true,
-      statusCode: 200,
-      message: 'Request successful',
-      data: variantExample,
     },
     'POST /products/{id}/reviews': {
       success: true,

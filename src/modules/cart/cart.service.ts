@@ -6,9 +6,9 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AddToCartDto } from "./dtos/add-to-cart.dto";
-import { UpdateCartItemDto } from "./dtos/update-cart-item.dto";
 import { DeliveryService } from "../delivery/delivery.service";
 import { assertEntityExists } from "src/common/validators/entity-exists.validator";
+import { AuthenticationStatus, ProductStatus } from "generated/prisma/client";
 
 @Injectable()
 export class CartService {
@@ -33,41 +33,29 @@ export class CartService {
             include: { user: { select: { stripe_onboarding_complete: true } } },
         });
         if (!product) throw new NotFoundException(`Product with ID ${dto.productId} not found`);
-        if (product.status !== "ACTIVE") throw new BadRequestException("Product is not available");
+        if (product.status !== ProductStatus.ACTIVE) throw new BadRequestException("Product is not available");
+        if (product.authentication_status !== AuthenticationStatus.VERIFIED) {
+            throw new BadRequestException("This item has not been authenticated yet");
+        }
         if (product.userId === userId) throw new BadRequestException("You cannot add your own product to cart");
         if (!product.user.stripe_onboarding_complete) {
             throw new ForbiddenException("This seller has not completed payment setup.");
         }
 
-        // Validate variant
-        const variant = await this.prismaService.productVariant.findFirst({
-            where: { id: dto.variantId, productId: dto.productId },
-        });
-        if (!variant) {
-            await assertEntityExists(this.prismaService.productVariant, "Product variant", dto.variantId);
-            throw new NotFoundException(`Product variant with ID ${dto.variantId} not found for Product with ID ${dto.productId}`);
-        }
-
         const cart = await this.getOrCreateCart(userId);
 
-        // Upsert cart item (increment if exists)
         const existing = await this.prismaService.cartItem.findFirst({
-            where: { cartId: cart.id, productId: dto.productId, variantId: dto.variantId },
+            where: { cartId: cart.id, productId: dto.productId },
         });
 
         if (existing) {
-            return this.prismaService.cartItem.update({
-                where: { id: existing.id },
-                data: { quantity: existing.quantity + dto.quantity },
-            });
+            return existing;
         }
 
         return this.prismaService.cartItem.create({
             data: {
                 cartId: cart.id,
                 productId: dto.productId,
-                variantId: dto.variantId,
-                quantity: dto.quantity,
             },
         });
     }
@@ -88,10 +76,8 @@ export class CartService {
                                         delivery_option: true,
                                     },
                                 },
-                                variants: true,
                             },
                         },
-                        variant: true,
                     },
                 },
             },
@@ -124,7 +110,7 @@ export class CartService {
 
             const subtotal = items.reduce((sum, i) => {
                 const price = i.product.discounted_price ?? i.product.original_price;
-                return sum + price * i.quantity;
+                return sum + price;
             }, 0);
 
             const deliveryCost = delivery.cost;
@@ -143,8 +129,6 @@ export class CartService {
                 items: items.map((i) => ({
                     id: i.id,
                     productId: i.productId,
-                    variantId: i.variantId,
-                    quantity: i.quantity,
                     price: i.product.discounted_price ?? i.product.original_price,
                     product: {
                         id: i.product.id,
@@ -152,7 +136,6 @@ export class CartService {
                         image_urls: i.product.image_urls,
                         status: i.product.status,
                     },
-                    variant: { id: i.variant.id, variantName: i.variant.variantName, price: i.variant.price },
                 })),
                 subtotal,
                 delivery_cost: deliveryCost,
@@ -161,21 +144,6 @@ export class CartService {
         }
 
         return { seller_groups: sellerGroups, grand_total: grandTotal };
-    }
-
-    // ─── Update item quantity ────────────────────────────────────────────────────
-    async updateItem(userId: number, itemId: number, dto: UpdateCartItemDto) {
-        const item = await this.prismaService.cartItem.findUnique({
-            where: { id: itemId },
-            include: { cart: true },
-        });
-        if (!item) throw new NotFoundException("Cart item not found");
-        if (item.cart.userId !== userId) throw new ForbiddenException("Not your cart item");
-
-        return this.prismaService.cartItem.update({
-            where: { id: itemId },
-            data: { quantity: dto.quantity },
-        });
     }
 
     // ─── Remove item ─────────────────────────────────────────────────────────────

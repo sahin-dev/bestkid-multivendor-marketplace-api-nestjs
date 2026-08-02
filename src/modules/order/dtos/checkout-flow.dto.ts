@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { Transform, Type } from "class-transformer";
-import { IsArray, IsBoolean, IsInt, IsNotEmpty, IsOptional, IsPositive, IsString, IsUrl } from "class-validator";
+import { IsArray, IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, IsUrl } from "class-validator";
 
 function toNumberArray(value: unknown) {
     if (Array.isArray(value)) {
@@ -116,18 +116,6 @@ export class BuyNowCheckoutSummaryDto {
     @IsInt()
     @ApiProperty({ description: "Product ID selected from the product details page" })
     productId: number;
-
-    @Type(() => Number)
-    @IsInt()
-    @IsOptional()
-    @ApiPropertyOptional({ description: "Selected product variant ID. Required when the product has variants." })
-    variantId?: number;
-
-    @Type(() => Number)
-    @IsInt()
-    @IsPositive()
-    @ApiProperty({ description: "Quantity to buy now", example: 1 })
-    quantity: number;
 
     @Type(() => Number)
     @IsInt()

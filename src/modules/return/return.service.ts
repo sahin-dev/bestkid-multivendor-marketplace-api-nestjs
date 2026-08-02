@@ -315,7 +315,6 @@ export class ReturnService {
             orderItem: {
                 include: {
                     product: { select: { id: true, name: true, image_urls: true } },
-                    variant: true,
                     order: {
                         include: {
                             seller: {
@@ -344,7 +343,6 @@ export class ReturnService {
             orderItem: {
                 include: {
                     product: { select: { id: true, name: true, image_urls: true } },
-                    variant: true,
                     order: {
                         include: {
                             seller: {
@@ -364,7 +362,6 @@ export class ReturnService {
                             items: {
                                 include: {
                                     product: { select: { id: true, name: true, image_urls: true } },
-                                    variant: true,
                                 },
                             },
                         },
@@ -390,8 +387,6 @@ export class ReturnService {
                 productId: request.orderItem.productId,
                 name: request.orderItem.product?.name,
                 image_url: request.orderItem.product?.image_urls?.[0] ?? null,
-                variant: request.orderItem.variant,
-                quantity: request.orderItem.quantity,
                 price: request.orderItem.price,
             },
         };
@@ -447,10 +442,8 @@ export class ReturnService {
                 items: order.items.map((item: any) => ({
                     id: item.id,
                     productId: item.productId,
-                    variantId: item.variantId,
-                    quantity: item.quantity,
                     price: item.price,
-                    line_total: item.price * item.quantity,
+                    line_total: item.price,
                     product: item.product
                         ? {
                               id: item.product.id,
@@ -459,18 +452,14 @@ export class ReturnService {
                               image_url: item.product.image_urls?.[0] ?? null,
                           }
                         : null,
-                    variant: item.variant,
                     is_returned_item: item.id === request.orderItemId,
                 })),
             },
             returned_item: {
                 id: request.orderItem.id,
                 productId: request.orderItem.productId,
-                variantId: request.orderItem.variantId,
-                quantity: request.orderItem.quantity,
                 price: request.orderItem.price,
                 product: request.orderItem.product,
-                variant: request.orderItem.variant,
             },
             actions: {
                 can_message_seller: true,

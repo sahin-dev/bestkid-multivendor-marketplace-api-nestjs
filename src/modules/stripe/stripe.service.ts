@@ -203,7 +203,7 @@ export class StripeService {
                         currency: "eur",
                         product_data: {
                             name: item.product.name,
-                            description: `Buy Now checkout for ${item.quantity} item(s)`,
+                            description: "Buy Now checkout",
                             images: item.product.image_url ? [item.product.image_url] : undefined,
                         },
                         unit_amount: amountInCents,
@@ -215,8 +215,6 @@ export class StripeService {
                 checkoutMode: "buy_now",
                 userId: String(userId),
                 productId: String(dto.productId),
-                variantId: dto.variantId ? String(dto.variantId) : "",
-                quantity: String(dto.quantity),
                 addressId: dto.addressId ? String(dto.addressId) : "",
                 shippingAddress: dto.shippingAddress ?? "",
                 city: dto.city ?? "",
@@ -356,20 +354,16 @@ export class StripeService {
     private async handleBuyNowCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
         const userId = Number(session.metadata?.userId);
         const productId = Number(session.metadata?.productId);
-        const quantity = Number(session.metadata?.quantity);
-        const variantId = this.numberFromMetadata(session.metadata?.variantId);
         const addressId = this.numberFromMetadata(session.metadata?.addressId);
 
-        if (!userId || !productId || !quantity) {
-            this.logger.warn(`Skipping buy_now checkout.session.completed ${session.id}: missing userId, productId, or quantity metadata.`);
+        if (!userId || !productId) {
+            this.logger.warn(`Skipping buy_now checkout.session.completed ${session.id}: missing userId or productId metadata.`);
             return;
         }
 
         try {
             await this.orderService.checkoutBuyNow(userId, {
                 productId,
-                variantId,
-                quantity,
                 addressId,
                 shippingAddress: this.stringFromMetadata(session.metadata?.shippingAddress),
                 city: this.stringFromMetadata(session.metadata?.city),

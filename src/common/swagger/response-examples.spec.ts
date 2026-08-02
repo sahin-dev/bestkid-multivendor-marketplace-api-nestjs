@@ -115,11 +115,10 @@ describe('applySwaggerResponseExamples', () => {
       views: 12,
       total_reviews: 5,
       average_rating: 4.9,
-      is_authenticated: false,
-      authentication_status: 'PENDING',
+      is_authenticated: true,
+      authentication_status: 'VERIFIED',
       category: { id: 1, name: 'Kids' },
       subCategory: { id: 2, name: 'Kids Sneakers', categoryId: 1 },
-      variants: [{ id: 10, productId: 1, variantName: 'S', price: 18 }],
       effective_price: 18,
       is_wishlisted: false,
       seller_overview: {
@@ -157,7 +156,6 @@ describe('applySwaggerResponseExamples', () => {
           discounted_price: 18,
           category: { id: 1, name: 'Kids' },
           subCategory: { id: 2, name: 'Kids Sneakers' },
-          variants: [{ id: 10, productId: 1, variantName: 'S', price: 18 }],
           effective_price: 18,
           is_wishlisted: false,
         },
@@ -200,15 +198,12 @@ describe('applySwaggerResponseExamples', () => {
             {
               id: 14,
               productId: 1,
-              variantId: 10,
-              quantity: 1,
               price: 18,
               product: {
                 id: 1,
                 name: 'Kids Cotton Hoodie - Soft Fit',
                 status: 'ACTIVE',
               },
-              variant: { id: 10, variantName: 'S', price: 18 },
             },
           ],
           subtotal: 18,
@@ -239,7 +234,6 @@ describe('applySwaggerResponseExamples', () => {
         {
           id: 31,
           productId: 1,
-          variantId: 10,
           line_total: 260,
           actions: {
             can_review: false,
@@ -257,15 +251,19 @@ describe('applySwaggerResponseExamples', () => {
       ].examples.success.value;
     expect(checkoutSummarySuccess.data).toMatchObject({
       selected_seller_ids: [7],
-      selected_cart_item_ids: [31],
+      selected_cart_item_ids: [31, 32],
       seller_groups: [
         {
           items: [
             {
               id: 31,
               productId: 1,
-              variantId: 10,
-              quantity: 2,
+              price: 260,
+            },
+            {
+              id: 32,
+              productId: 2,
+              price: 260,
             },
           ],
         },
@@ -293,8 +291,6 @@ describe('applySwaggerResponseExamples', () => {
             {
               id: null,
               productId: 1,
-              variantId: 10,
-              quantity: 1,
             },
           ],
           delivery_cost: 4.99,
@@ -339,12 +335,11 @@ describe('applySwaggerResponseExamples', () => {
               id: 31,
               productId: 1,
               name: 'Kolev and Kolev - Soft Fit',
-              quantity: 1,
               price: 260,
               line_total: 260,
             },
           ],
-          matched_quantity: 1,
+          matched_item_count: 1,
         },
       ],
       meta: {
@@ -486,8 +481,6 @@ describe('applySwaggerResponseExamples', () => {
                 {
                   id: null,
                   productId: 1,
-                  variantId: 10,
-                  quantity: 1,
                   price: 260,
                   line_total: 260,
                 },

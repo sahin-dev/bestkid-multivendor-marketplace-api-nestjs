@@ -91,9 +91,4 @@ export class ProductQueryDto {
     @IsBoolean()
     @ApiPropertyOptional({ description: "Only show discounted products" })
     discountedOnly?: boolean;
-
-    @IsOptional()
-    @IsString()
-    @ApiPropertyOptional({ description: "Filter by variant or size label" })
-    size?: string;
 }

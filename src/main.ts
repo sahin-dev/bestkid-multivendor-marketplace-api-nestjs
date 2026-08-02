@@ -56,7 +56,7 @@ async function bootstrap() {
     .addTag('Admin Dashboard', 'Admin dashboard cards, activity, and platform earnings')
     .addTag('Admin Coupons', 'Admin coupon management')
     .addTag('User Management', 'Admin user listing, blocking, and seller tier management')
-    .addTag('Products', 'Product listing, moderation, variants, and reviews')
+    .addTag('Products', 'Product listing, moderation, and reviews. Each product is a single, unique, authenticated item.')
     .addTag('Categories', 'Product category and sub-category management')
     .addTag('Orders', 'Buyer cart checkout, coupon preview, seller orders, and admin order workflows')
     .addTag('Returns', 'Return request workflows')
