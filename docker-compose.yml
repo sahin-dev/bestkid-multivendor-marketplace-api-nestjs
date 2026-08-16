@@ -1,0 +1,66 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: bestkid-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bestkid
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bestkid"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bestkid-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env.docker
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: bestkid
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/bestkid?schema=public
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      SWAGGER_SERVER_URL: ${SWAGGER_SERVER_URL:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      BASE_PATH: ${BASE_PATH:-http://localhost:3000}
+      MAILER_HOST: ${MAILER_HOST:-smtp.example.com}
+      MAILER_PORT: ${MAILER_PORT:-587}
+      MAILER_MAIL: ${MAILER_MAIL:-hello@example.com}
+      MAILER_PASSWORD: ${MAILER_PASSWORD:-your-password}
+      MAILER_SERVICE: ${MAILER_SERVICE:-Gmail}
+      STRIPE_KEY: ${STRIPE_KEY:-}
+      STRIPE_WEBHOOK: ${STRIPE_WEBHOOK:-}
+      LEGITGRAILS_ENABLED: ${LEGITGRAILS_ENABLED:-false}
+      LEGITGRAILS_BASE_URL: ${LEGITGRAILS_BASE_URL:-https://api.legitgrails.com/v1/integrations}
+      LEGITGRAILS_API_KEY: ${LEGITGRAILS_API_KEY:-}
+      LEGITGRAILS_TEST_MODE: ${LEGITGRAILS_TEST_MODE:-true}
+      LEGITGRAILS_WEBHOOK_SIGNING_SECRET: ${LEGITGRAILS_WEBHOOK_SIGNING_SECRET:-}
+      LEGITGRAILS_WEBHOOK_MAX_CLOCK_SKEW_SECONDS: ${LEGITGRAILS_WEBHOOK_MAX_CLOCK_SKEW_SECONDS:-300}
+      LEGITGRAILS_TIMEOUT_MS: ${LEGITGRAILS_TIMEOUT_MS:-15000}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./uploads:/usr/src/app/uploads
+
+volumes:
+  postgres_data:

@@ -274,6 +274,7 @@ export class HomeService {
     return {
       id: true,
       name: true,
+      grade: true,
       original_price: true,
       discounted_price: true,
       discount_percentage: true,

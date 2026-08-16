@@ -5,7 +5,7 @@ import { ProductService } from "./product.service";
 import { CreateProductDto } from "./dtos/create-product.dto";
 import { UpdateProductDto } from "./dtos/update-product.dto";
 import { CreateReviewDto } from "./dtos/create-review.dto";
-import { ProductQueryDto } from "./dtos/product-query.dto";
+import { ProductQueryDto, SellerProductStatus } from "./dtos/product-query.dto";
 import { UpdateProductAuthStatusDto } from "./dtos/update-product-auth-status.dto";
 import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { AdminProductApprovalFilter, AdminProductQueryDto } from "./dtos/admin-product-query.dto";
@@ -74,6 +74,8 @@ export class ProductController {
     @ApiQuery({ name: "limit", required: false, type: Number })
     @ApiQuery({ name: "search", required: false, type: String })
     @ApiQuery({ name: "status", required: false, enum: ProductStatus })
+    @ApiQuery({ name: "sellerStatus", required: false, enum: SellerProductStatus })
+    @ApiQuery({ name: "authenticationStatus", required: false, enum: AuthenticationStatus })
     @ApiQuery({ name: "sort", required: false, enum: ["latest", "price_low", "price_high", "rating", "popular"] })
     async findSellerProducts(@GetUser("id") sellerId: number, @Query() query: ProductQueryDto) {
         return this.productService.findSellerProducts(sellerId, query);

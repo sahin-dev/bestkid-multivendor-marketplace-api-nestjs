@@ -20254,6 +20254,773 @@
       "name": "LegitGrails",
       "item": [
         {
+          "name": "List LegitGrails brands available for authentication",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/legitgrails/brands?category=true&price=true",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "legitgrails",
+                "brands"
+              ],
+              "query": [
+                {
+                  "key": "category",
+                  "value": "true",
+                  "disabled": true
+                },
+                {
+                  "key": "price",
+                  "value": "true",
+                  "disabled": true
+                }
+              ],
+              "variable": []
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/brands",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "brands"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"statusCode\": 200,\n  \"message\": \"Request successful\",\n  \"data\": [\n    {\n      \"id\": 12,\n      \"name\": \"Gucci\",\n      \"type\": \"luxury\"\n    },\n    {\n      \"id\": 34,\n      \"name\": \"Nike\",\n      \"type\": \"streetwear\"\n    }\n  ]\n}"
+            },
+            {
+              "name": "400 Bad Request",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/brands",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "brands"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": [\n    \"name should not be empty\",\n    \"original_price must be a positive number\"\n  ],\n  \"url\": \"/legitgrails/brands\",\n  \"statusCode\": 400\n}"
+            },
+            {
+              "name": "401 Unauthorized",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/brands",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "brands"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Unauthorized\",\n  \"url\": \"/legitgrails/brands\",\n  \"statusCode\": 401\n}"
+            },
+            {
+              "name": "403 Forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/brands",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "brands"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"You do not have permission to access this resource\",\n  \"url\": \"/legitgrails/brands\",\n  \"statusCode\": 403\n}"
+            },
+            {
+              "name": "404 Not Found",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/brands",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "brands"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Resource not found\",\n  \"url\": \"/legitgrails/brands\",\n  \"statusCode\": 404\n}"
+            },
+            {
+              "name": "409 Conflict",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/brands",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "brands"
+                  ]
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"A resource with this value already exists\",\n  \"url\": \"/legitgrails/brands\",\n  \"statusCode\": 409\n}"
+            },
+            {
+              "name": "500 Internal Server Error",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/brands",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "brands"
+                  ]
+                }
+              },
+              "status": "Internal Server Error",
+              "code": 500,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Internal server error!\",\n  \"url\": \"/legitgrails/brands\",\n  \"statusCode\": 500\n}"
+            }
+          ]
+        },
+        {
+          "name": "List LegitGrails categories available for authentication",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/legitgrails/categories",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "legitgrails",
+                "categories"
+              ],
+              "query": [],
+              "variable": []
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/categories",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "categories"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"statusCode\": 200,\n  \"message\": \"Request successful\",\n  \"data\": [\n    {\n      \"id\": 1,\n      \"name\": \"bag\",\n      \"display_name\": \"Bag\"\n    },\n    {\n      \"id\": 2,\n      \"name\": \"sneaker\",\n      \"display_name\": \"Sneaker\"\n    }\n  ]\n}"
+            },
+            {
+              "name": "400 Bad Request",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/categories",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "categories"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": [\n    \"name should not be empty\",\n    \"original_price must be a positive number\"\n  ],\n  \"url\": \"/legitgrails/categories\",\n  \"statusCode\": 400\n}"
+            },
+            {
+              "name": "401 Unauthorized",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/categories",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "categories"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Unauthorized\",\n  \"url\": \"/legitgrails/categories\",\n  \"statusCode\": 401\n}"
+            },
+            {
+              "name": "403 Forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/categories",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "categories"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"You do not have permission to access this resource\",\n  \"url\": \"/legitgrails/categories\",\n  \"statusCode\": 403\n}"
+            },
+            {
+              "name": "404 Not Found",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/categories",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "categories"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Resource not found\",\n  \"url\": \"/legitgrails/categories\",\n  \"statusCode\": 404\n}"
+            },
+            {
+              "name": "409 Conflict",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/categories",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "categories"
+                  ]
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"A resource with this value already exists\",\n  \"url\": \"/legitgrails/categories\",\n  \"statusCode\": 409\n}"
+            },
+            {
+              "name": "500 Internal Server Error",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/categories",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "categories"
+                  ]
+                }
+              },
+              "status": "Internal Server Error",
+              "code": 500,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Internal server error!\",\n  \"url\": \"/legitgrails/categories\",\n  \"statusCode\": 500\n}"
+            }
+          ]
+        },
+        {
+          "name": "List required verification photo angles for a LegitGrails category",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/legitgrails/photo-index?category=string",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "legitgrails",
+                "photo-index"
+              ],
+              "query": [
+                {
+                  "key": "category",
+                  "value": "string",
+                  "disabled": false
+                }
+              ],
+              "variable": []
+            }
+          },
+          "response": [
+            {
+              "name": "200 OK",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/photo-index",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "photo-index"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"statusCode\": 200,\n  \"message\": \"Request successful\",\n  \"data\": [\n    {\n      \"index_id\": 101,\n      \"index_back_name\": \"serial-number\",\n      \"index_display_name\": \"Serial number\",\n      \"photo_example_url\": \"https://cdn.legitgrails.com/examples/serial-number.png\",\n      \"icon_url\": \"https://cdn.legitgrails.com/icons/serial-number.svg\",\n      \"zendesk_url\": \"https://legitgrails.zendesk.com/hc/en-us/articles/10779809189521-Serial-Number\",\n      \"required\": true,\n      \"important\": true,\n      \"order_id\": 1\n    },\n    {\n      \"index_id\": 102,\n      \"index_back_name\": \"made-in-label\",\n      \"index_display_name\": \"Made in label\",\n      \"photo_example_url\": \"https://cdn.legitgrails.com/examples/made-in-label.png\",\n      \"icon_url\": \"https://cdn.legitgrails.com/icons/made-in-label.svg\",\n      \"zendesk_url\": \"https://legitgrails.zendesk.com/hc/en-us/articles/10778079520785-Made-In-Label\",\n      \"required\": true,\n      \"important\": false,\n      \"order_id\": 2\n    }\n  ]\n}"
+            },
+            {
+              "name": "400 Bad Request",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/photo-index",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "photo-index"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": [\n    \"name should not be empty\",\n    \"original_price must be a positive number\"\n  ],\n  \"url\": \"/legitgrails/photo-index\",\n  \"statusCode\": 400\n}"
+            },
+            {
+              "name": "401 Unauthorized",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/photo-index",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "photo-index"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Unauthorized\",\n  \"url\": \"/legitgrails/photo-index\",\n  \"statusCode\": 401\n}"
+            },
+            {
+              "name": "403 Forbidden",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/photo-index",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "photo-index"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"You do not have permission to access this resource\",\n  \"url\": \"/legitgrails/photo-index\",\n  \"statusCode\": 403\n}"
+            },
+            {
+              "name": "404 Not Found",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/photo-index",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "photo-index"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Resource not found\",\n  \"url\": \"/legitgrails/photo-index\",\n  \"statusCode\": 404\n}"
+            },
+            {
+              "name": "409 Conflict",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/photo-index",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "photo-index"
+                  ]
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"A resource with this value already exists\",\n  \"url\": \"/legitgrails/photo-index\",\n  \"statusCode\": 409\n}"
+            },
+            {
+              "name": "500 Internal Server Error",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/legitgrails/photo-index",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "legitgrails",
+                    "photo-index"
+                  ]
+                }
+              },
+              "status": "Internal Server Error",
+              "code": 500,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Internal server error!\",\n  \"url\": \"/legitgrails/photo-index\",\n  \"statusCode\": 500\n}"
+            }
+          ]
+        },
+        {
           "name": "LegitGrails webhook endpoint",
           "request": {
             "method": "POST",
@@ -20275,6 +21042,7 @@
               "query": [],
               "variable": []
             },
+            "description": "Receives task-completed and photo-update-needed events.",
             "auth": {
               "type": "noauth"
             }
@@ -20310,7 +21078,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"success\": true,\n  \"statusCode\": 200,\n  \"message\": \"Request successful\",\n  \"data\": {\n    \"received\": true,\n    \"authentication\": {\n      \"id\": 5,\n      \"productId\": 1,\n      \"provider\": \"LEGITGRAILS\",\n      \"externalOrderId\": \"lg_auth_123456789\",\n      \"status\": \"COMPLETED\",\n      \"verdict\": \"AUTHENTIC\",\n      \"certificateUrl\": \"https://legitgrails.example/certificates/lg_auth_123456789.pdf\",\n      \"reportUrl\": null,\n      \"image_urls\": [\n        \"https://cdn.bestkid.test/verification/front.png\",\n        \"https://cdn.bestkid.test/verification/back.png\",\n        \"https://cdn.bestkid.test/verification/label.png\"\n      ],\n      \"submittedAt\": \"2026-07-23T09:30:00.000Z\",\n      \"completedAt\": \"2026-07-23T10:00:00.000Z\",\n      \"lastError\": null,\n      \"createdAt\": \"2026-07-23T09:30:00.000Z\",\n      \"updatedAt\": \"2026-07-23T09:30:00.000Z\"\n    }\n  }\n}"
+              "body": "{\n  \"success\": true,\n  \"statusCode\": 200,\n  \"message\": \"Request successful\",\n  \"data\": {\n    \"received\": true,\n    \"authentication\": {\n      \"id\": 5,\n      \"productId\": 1,\n      \"provider\": \"LEGITGRAILS\",\n      \"externalOrderId\": \"23423\",\n      \"status\": \"COMPLETED\",\n      \"verdict\": \"AUTHENTIC\",\n      \"certificateUrl\": \"https://legitgrails.example/certificates/lg_auth_123456789.pdf\",\n      \"reportUrl\": null,\n      \"image_urls\": [\n        \"https://cdn.bestkid.test/verification/front.png\",\n        \"https://cdn.bestkid.test/verification/back.png\",\n        \"https://cdn.bestkid.test/verification/label.png\"\n      ],\n      \"submittedAt\": \"2026-07-23T09:30:00.000Z\",\n      \"completedAt\": \"2026-07-23T10:00:00.000Z\",\n      \"lastError\": null,\n      \"createdAt\": \"2026-07-23T09:30:00.000Z\",\n      \"updatedAt\": \"2026-07-23T09:30:00.000Z\"\n    }\n  }\n}"
             },
             {
               "name": "400 Bad Request",
@@ -20567,7 +21335,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"success\": true,\n  \"statusCode\": 200,\n  \"message\": \"Request successful\",\n  \"data\": {\n    \"product\": {\n      \"id\": 1,\n      \"userId\": 7,\n      \"brand\": \"Zara Kids\",\n      \"is_authenticated\": false,\n      \"authentication_status\": \"PENDING\",\n      \"approved_at\": null,\n      \"rejected_at\": null\n    },\n    \"latest_request\": {\n      \"id\": 5,\n      \"productId\": 1,\n      \"provider\": \"LEGITGRAILS\",\n      \"externalOrderId\": \"lg_auth_123456789\",\n      \"status\": \"IN_REVIEW\",\n      \"verdict\": null,\n      \"certificateUrl\": null,\n      \"reportUrl\": null,\n      \"image_urls\": [\n        \"https://cdn.bestkid.test/verification/front.png\",\n        \"https://cdn.bestkid.test/verification/back.png\",\n        \"https://cdn.bestkid.test/verification/label.png\"\n      ],\n      \"submittedAt\": \"2026-07-23T09:30:00.000Z\",\n      \"completedAt\": null,\n      \"lastError\": null,\n      \"createdAt\": \"2026-07-23T09:30:00.000Z\",\n      \"updatedAt\": \"2026-07-23T09:30:00.000Z\"\n    },\n    \"requests\": [\n      {\n        \"id\": 5,\n        \"productId\": 1,\n        \"provider\": \"LEGITGRAILS\",\n        \"externalOrderId\": \"lg_auth_123456789\",\n        \"status\": \"IN_REVIEW\",\n        \"verdict\": null,\n        \"certificateUrl\": null,\n        \"reportUrl\": null,\n        \"image_urls\": [\n          \"https://cdn.bestkid.test/verification/front.png\",\n          \"https://cdn.bestkid.test/verification/back.png\",\n          \"https://cdn.bestkid.test/verification/label.png\"\n        ],\n        \"submittedAt\": \"2026-07-23T09:30:00.000Z\",\n        \"completedAt\": null,\n        \"lastError\": null,\n        \"createdAt\": \"2026-07-23T09:30:00.000Z\",\n        \"updatedAt\": \"2026-07-23T09:30:00.000Z\"\n      }\n    ]\n  }\n}"
+              "body": "{\n  \"success\": true,\n  \"statusCode\": 200,\n  \"message\": \"Request successful\",\n  \"data\": {\n    \"product\": {\n      \"id\": 1,\n      \"userId\": 7,\n      \"brand\": \"Zara Kids\",\n      \"status\": \"INACTIVE\",\n      \"is_authenticated\": false,\n      \"authentication_status\": \"PENDING\",\n      \"approved_at\": null,\n      \"rejected_at\": null\n    },\n    \"latest_request\": {\n      \"id\": 5,\n      \"productId\": 1,\n      \"provider\": \"LEGITGRAILS\",\n      \"externalOrderId\": \"23423\",\n      \"status\": \"SUBMITTED\",\n      \"verdict\": null,\n      \"certificateUrl\": null,\n      \"reportUrl\": null,\n      \"image_urls\": [\n        \"https://cdn.bestkid.test/verification/front.png\",\n        \"https://cdn.bestkid.test/verification/back.png\",\n        \"https://cdn.bestkid.test/verification/label.png\"\n      ],\n      \"submittedAt\": \"2026-07-23T09:30:00.000Z\",\n      \"completedAt\": null,\n      \"lastError\": null,\n      \"createdAt\": \"2026-07-23T09:30:00.000Z\",\n      \"updatedAt\": \"2026-07-23T09:30:00.000Z\"\n    },\n    \"requests\": [\n      {\n        \"id\": 5,\n        \"productId\": 1,\n        \"provider\": \"LEGITGRAILS\",\n        \"externalOrderId\": \"23423\",\n        \"status\": \"SUBMITTED\",\n        \"verdict\": null,\n        \"certificateUrl\": null,\n        \"reportUrl\": null,\n        \"image_urls\": [\n          \"https://cdn.bestkid.test/verification/front.png\",\n          \"https://cdn.bestkid.test/verification/back.png\",\n          \"https://cdn.bestkid.test/verification/label.png\"\n        ],\n        \"submittedAt\": \"2026-07-23T09:30:00.000Z\",\n        \"completedAt\": null,\n        \"lastError\": null,\n        \"createdAt\": \"2026-07-23T09:30:00.000Z\",\n        \"updatedAt\": \"2026-07-23T09:30:00.000Z\"\n      }\n    ]\n  }\n}"
             },
             {
               "name": "400 Bad Request",
@@ -20770,6 +21538,290 @@
           ]
         },
         {
+          "name": "Resubmit photos LegitGrails flagged via the photo-update-needed webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products/:id/authentication/reupload-photos",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                ":id",
+                "authentication",
+                "reupload-photos"
+              ],
+              "query": [],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "1"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"photos\": [\n    {\n      \"index\": \"serial-number\",\n      \"url\": \"https://cdn.bestkid.test/verification/serial-number-2.png\",\n      \"is_unable_to_provide\": true\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/products/:id/authentication/reupload-photos",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "products",
+                    ":id",
+                    "authentication",
+                    "reupload-photos"
+                  ]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"statusCode\": 201,\n  \"message\": \"Request successful\",\n  \"data\": {\n    \"id\": 5,\n    \"productId\": 1,\n    \"provider\": \"LEGITGRAILS\",\n    \"externalOrderId\": \"23423\",\n    \"status\": \"SUBMITTED\",\n    \"verdict\": null,\n    \"certificateUrl\": null,\n    \"reportUrl\": null,\n    \"image_urls\": [\n      \"https://cdn.bestkid.test/verification/front.png\",\n      \"https://cdn.bestkid.test/verification/back.png\",\n      \"https://cdn.bestkid.test/verification/label.png\"\n    ],\n    \"submittedAt\": \"2026-07-23T09:30:00.000Z\",\n    \"completedAt\": null,\n    \"lastError\": null,\n    \"createdAt\": \"2026-07-23T09:30:00.000Z\",\n    \"updatedAt\": \"2026-07-23T09:30:00.000Z\"\n  }\n}"
+            },
+            {
+              "name": "400 Bad Request",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/products/:id/authentication/reupload-photos",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "products",
+                    ":id",
+                    "authentication",
+                    "reupload-photos"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": [\n    \"name should not be empty\",\n    \"original_price must be a positive number\"\n  ],\n  \"url\": \"/products/1/authentication/reupload-photos\",\n  \"statusCode\": 400\n}"
+            },
+            {
+              "name": "401 Unauthorized",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/products/:id/authentication/reupload-photos",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "products",
+                    ":id",
+                    "authentication",
+                    "reupload-photos"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Unauthorized\",\n  \"url\": \"/products/1/authentication/reupload-photos\",\n  \"statusCode\": 401\n}"
+            },
+            {
+              "name": "403 Forbidden",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/products/:id/authentication/reupload-photos",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "products",
+                    ":id",
+                    "authentication",
+                    "reupload-photos"
+                  ]
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"You do not have permission to access this resource\",\n  \"url\": \"/products/1/authentication/reupload-photos\",\n  \"statusCode\": 403\n}"
+            },
+            {
+              "name": "404 Not Found",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/products/:id/authentication/reupload-photos",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "products",
+                    ":id",
+                    "authentication",
+                    "reupload-photos"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Resource not found\",\n  \"url\": \"/products/1/authentication/reupload-photos\",\n  \"statusCode\": 404\n}"
+            },
+            {
+              "name": "409 Conflict",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/products/:id/authentication/reupload-photos",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "products",
+                    ":id",
+                    "authentication",
+                    "reupload-photos"
+                  ]
+                }
+              },
+              "status": "Conflict",
+              "code": 409,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"A resource with this value already exists\",\n  \"url\": \"/products/1/authentication/reupload-photos\",\n  \"statusCode\": 409\n}"
+            },
+            {
+              "name": "500 Internal Server Error",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/products/:id/authentication/reupload-photos",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "products",
+                    ":id",
+                    "authentication",
+                    "reupload-photos"
+                  ]
+                }
+              },
+              "status": "Internal Server Error",
+              "code": 500,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Internal server error!\",\n  \"url\": \"/products/1/authentication/reupload-photos\",\n  \"statusCode\": 500\n}"
+            }
+          ]
+        },
+        {
           "name": "Submit a product to LegitGrails for authentication",
           "request": {
             "method": "POST",
@@ -20804,7 +21856,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"brand\": \"Nike\",\n  \"image_urls\": [\n    \"https://cdn.bestkid.test/verification/front.png\",\n    \"https://cdn.bestkid.test/verification/back.png\",\n    \"https://cdn.bestkid.test/verification/label.png\"\n  ],\n  \"notes\": \"string\",\n  \"turnaround\": \"string\"\n}",
+              "raw": "{\n  \"category\": \"bag\",\n  \"brand\": \"Gucci\",\n  \"item\": \"Marmont\",\n  \"photos\": [\n    {\n      \"index\": \"serial-number\",\n      \"url\": \"https://cdn.bestkid.test/verification/serial-number.png\"\n    }\n  ],\n  \"answer_time\": 1440,\n  \"note\": \"string\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -20845,7 +21897,7 @@
                   "value": "application/json"
                 }
               ],
-              "body": "{\n  \"success\": true,\n  \"statusCode\": 201,\n  \"message\": \"Request successful\",\n  \"data\": {\n    \"id\": 5,\n    \"productId\": 1,\n    \"provider\": \"LEGITGRAILS\",\n    \"externalOrderId\": \"lg_auth_123456789\",\n    \"status\": \"IN_REVIEW\",\n    \"verdict\": null,\n    \"certificateUrl\": null,\n    \"reportUrl\": null,\n    \"image_urls\": [\n      \"https://cdn.bestkid.test/verification/front.png\",\n      \"https://cdn.bestkid.test/verification/back.png\",\n      \"https://cdn.bestkid.test/verification/label.png\"\n    ],\n    \"submittedAt\": \"2026-07-23T09:30:00.000Z\",\n    \"completedAt\": null,\n    \"lastError\": null,\n    \"createdAt\": \"2026-07-23T09:30:00.000Z\",\n    \"updatedAt\": \"2026-07-23T09:30:00.000Z\"\n  }\n}"
+              "body": "{\n  \"success\": true,\n  \"statusCode\": 201,\n  \"message\": \"Request successful\",\n  \"data\": {\n    \"id\": 5,\n    \"productId\": 1,\n    \"provider\": \"LEGITGRAILS\",\n    \"externalOrderId\": \"23423\",\n    \"status\": \"SUBMITTED\",\n    \"verdict\": null,\n    \"certificateUrl\": null,\n    \"reportUrl\": null,\n    \"image_urls\": [\n      \"https://cdn.bestkid.test/verification/front.png\",\n      \"https://cdn.bestkid.test/verification/back.png\",\n      \"https://cdn.bestkid.test/verification/label.png\"\n    ],\n    \"submittedAt\": \"2026-07-23T09:30:00.000Z\",\n    \"completedAt\": null,\n    \"lastError\": null,\n    \"createdAt\": \"2026-07-23T09:30:00.000Z\",\n    \"updatedAt\": \"2026-07-23T09:30:00.000Z\"\n  }\n}"
             },
             {
               "name": "400 Bad Request",

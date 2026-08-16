@@ -288,7 +288,7 @@ export class StripeService {
                 signature,
                 this.stripeConfiguration.webhook_key!,
             );
-        } catch (err) {
+        } catch (err:any) {
             throw new BadRequestException(`Webhook signature verification failed: ${err.message}`);
         }
 
@@ -341,7 +341,7 @@ export class StripeService {
                 acceptedTerms: true,
             });
             this.logger.log(`Created orders for paid checkout session ${session.id}.`);
-        } catch (err) {
+        } catch (err:any) {
             if (err?.message === "Cart is empty") {
                 this.logger.warn(`Checkout session ${session.id} was already processed or cart is empty.`);
                 return;
@@ -373,7 +373,7 @@ export class StripeService {
                 stripeCheckoutSessionId: session.id,
             });
             this.logger.log(`Created Buy Now order for paid checkout session ${session.id}.`);
-        } catch (err) {
+        } catch (err:any) {
             this.logger.error(`Failed to create Buy Now order for checkout session ${session.id}`, err?.stack ?? err);
             throw err;
         }

@@ -94,4 +94,13 @@ export class UserService {
             data: { password: hashedPassword },
         });
     }
+
+    async updateFcmToken(userId: number, fcmToken?: string | null) {
+        const normalizedToken = fcmToken?.trim();
+
+        return this.prismaService.baseUser.update({
+            where: { id: userId },
+            data: { fcmToken: normalizedToken || null },
+        });
+    }
 }

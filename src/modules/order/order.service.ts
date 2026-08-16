@@ -794,7 +794,7 @@ export class OrderService {
             throw new NotFoundException("User not found");
         }
 
-        const checkoutAddress = await this.resolveCheckoutAddress(userId, dto);
+        // const checkoutAddress = await this.resolveCheckoutAddress(userId, dto);
         const product = await this.prismaService.product.findUnique({
             where: { id: dto.productId },
             include: {
@@ -833,7 +833,8 @@ export class OrderService {
         const sellerCountry = product.user.profile?.country ?? null;
         const delivery = this.deliveryService.resolveDelivery(
             product.user.delivery_option,
-            checkoutAddress.country ?? null,
+            // checkoutAddress?.country ?? null,
+            null,
             sellerCountry,
         );
         const unitPrice = this.roundMoney(product.discounted_price ?? product.original_price);
@@ -883,7 +884,7 @@ export class OrderService {
                 },
             ],
             addresses: user.addresses,
-            selected_address: checkoutAddress,
+            // selected_address: checkoutAddress,
             requires_address_selection: false,
             coupon: null,
             price_details: {

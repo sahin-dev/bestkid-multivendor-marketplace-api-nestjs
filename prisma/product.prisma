@@ -3,6 +3,7 @@ model Product {
   name                String
   description         String?
   brand               String?
+  grade               String?
   original_price      Float
   discounted_price    Float?
   discount_percentage Float?
@@ -22,7 +23,7 @@ model Product {
   cart_listed         CartItem[]
   recently_viewed     RecentlyView[]
   is_authenticated    Boolean              @default(false)
-  authentication_status AuthenticationStatus @default(PENDING)
+  authentication_status AuthenticationStatus @default(NOT_SUBMITTED)
   approved_at         DateTime?
   rejected_at         DateTime?
   sold_at             DateTime?
@@ -94,6 +95,7 @@ enum ProductStatus {
 }
 
 enum AuthenticationStatus {
+  NOT_SUBMITTED
   PENDING
   VERIFIED
   NOT_VERIFIED

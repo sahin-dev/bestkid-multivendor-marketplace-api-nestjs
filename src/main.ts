@@ -10,7 +10,7 @@ import { GlobalHttpExceptionHandler } from './common/exceptions/GlobalHttpExcept
 import { applySwaggerResponseExamples } from './common/swagger/response-examples';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
 
   const configuredOrigins = process.env.CORS_ORIGINS
     ?.split(",")

@@ -739,8 +739,8 @@ const legitGrailsAuthenticationExample = {
   id: 5,
   productId: 1,
   provider: 'LEGITGRAILS',
-  externalOrderId: 'lg_auth_123456789',
-  status: 'IN_REVIEW',
+  externalOrderId: '23423',
+  status: 'queued',
   verdict: null,
   certificateUrl: null,
   reportUrl: null,
@@ -754,6 +754,60 @@ const legitGrailsAuthenticationExample = {
   lastError: null,
   createdAt: '2026-07-23T09:30:00.000Z',
   updatedAt: '2026-07-23T09:30:00.000Z',
+};
+
+const legitGrailsCategoriesExample = {
+  data: [
+    { code: 'bag', name: 'Bags', name_locale: 'Bags', icon_url: null },
+    { code: 'sneaker', name: 'Sneakers', name_locale: 'Sneakers', icon_url: null },
+  ],
+};
+
+const legitGrailsBrandsExample = {
+  data: [
+    { code: 'gucci', name: 'Gucci', name_locale: 'Gucci', categories: [{ code: 'bag', name: 'Bags', name_locale: 'Bags' }] },
+    { code: 'nike', name: 'Nike', name_locale: 'Nike', categories: [{ code: 'sneaker', name: 'Sneakers', name_locale: 'Sneakers' }] },
+  ],
+  page: 1,
+  limit: 10,
+  total: 2,
+};
+
+const legitGrailsModelsExample = {
+  data: [{ code: 'gucci-bag-gg-marmont', name: 'GG Marmont', name_locale: 'GG Marmont', image_url: null }],
+  page: 1,
+  limit: 10,
+  total: 1,
+};
+
+const legitGrailsAnswerTimesExample = {
+  data: [
+    { code: 720, price: 5, default: true, available: true, next_available_at: null },
+    { code: 1440, price: 3, default: false, available: true, next_available_at: null },
+  ],
+};
+
+const legitGrailsPhotoIndexExample = {
+  data: [
+    {
+      code: 'overall-picture',
+      name: 'Overall picture',
+      name_locale: 'Overall picture',
+      required: true,
+      photo_limit: 2,
+      icon_url: null,
+      example_urls: ['https://cdn.legitgrails.com/examples/overall-picture.png'],
+    },
+    {
+      code: 'serial-number',
+      name: 'Serial number',
+      name_locale: 'Serial number',
+      required: true,
+      photo_limit: 1,
+      icon_url: 'https://cdn.legitgrails.com/icons/serial-number.svg',
+      example_urls: ['https://cdn.legitgrails.com/examples/serial-number.png'],
+    },
+  ],
 };
 
 const sellerOrderDetailExample = {
@@ -1801,11 +1855,47 @@ function getRouteSuccessExample(method: string, path: string) {
         pages: 3,
       },
     },
+    'GET /legitgrails/brands': {
+      success: true,
+      statusCode: 200,
+      message: 'Request successful',
+      data: legitGrailsBrandsExample,
+    },
+    'GET /legitgrails/categories': {
+      success: true,
+      statusCode: 200,
+      message: 'Request successful',
+      data: legitGrailsCategoriesExample,
+    },
+    'GET /legitgrails/models': {
+      success: true,
+      statusCode: 200,
+      message: 'Request successful',
+      data: legitGrailsModelsExample,
+    },
+    'GET /legitgrails/answer-times': {
+      success: true,
+      statusCode: 200,
+      message: 'Request successful',
+      data: legitGrailsAnswerTimesExample,
+    },
+    'GET /legitgrails/photo-index': {
+      success: true,
+      statusCode: 200,
+      message: 'Request successful',
+      data: legitGrailsPhotoIndexExample,
+    },
     'POST /products/{id}/authentication/submit': {
       success: true,
       statusCode: 201,
       message: 'Request successful',
       data: legitGrailsAuthenticationExample,
+    },
+    'POST /products/{id}/authentication/reupload-photos': {
+      success: true,
+      statusCode: 201,
+      message: 'Request successful',
+      data: { ...legitGrailsAuthenticationExample, status: 'accepted' },
     },
     'GET /products/{id}/authentication': {
       success: true,
@@ -1816,6 +1906,7 @@ function getRouteSuccessExample(method: string, path: string) {
           id: 1,
           userId: 7,
           brand: 'Zara Kids',
+          status: 'INACTIVE',
           is_authenticated: false,
           authentication_status: 'PENDING',
           approved_at: null,
@@ -2574,8 +2665,8 @@ function getRouteSuccessExample(method: string, path: string) {
         received: true,
         authentication: {
           ...legitGrailsAuthenticationExample,
-          status: 'COMPLETED',
-          verdict: 'AUTHENTIC',
+          status: 'completed',
+          verdict: 'authentic',
           completedAt: '2026-07-23T10:00:00.000Z',
           certificateUrl: 'https://legitgrails.example/certificates/lg_auth_123456789.pdf',
         },

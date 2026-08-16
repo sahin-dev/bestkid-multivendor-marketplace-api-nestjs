@@ -49,7 +49,7 @@ const statusNames: Record<string, string> = {
 
 const knownEnums: Record<string, string[]> = {
   AdminProductApprovalFilter: ["ALL", "APPROVED", "REJECTED", "PENDING"],
-  AuthenticationStatus: ["PENDING", "VERIFIED", "NOT_VERIFIED"],
+  AuthenticationStatus: ["NOT_SUBMITTED", "PENDING", "VERIFIED", "NOT_VERIFIED"],
   Condition: ["NEW", "USED", "REFURBISHED"],
   ProductStatus: ["ACTIVE", "INACTIVE", "SOLD"],
 };

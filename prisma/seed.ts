@@ -122,6 +122,125 @@ const buyerUsers = [
   },
 ];
 
+const legitGrailsSeedScenarios: Array<{
+  label: string;
+  authenticationStatus: "NOT_SUBMITTED" | "PENDING" | "VERIFIED" | "NOT_VERIFIED";
+  requestStatus: string | null;
+  verdict: string | null;
+  productStatus: "ACTIVE" | "INACTIVE";
+  rawResponse?: Record<string, any> | null;
+  certificateUrl?: string;
+}> = [
+  {
+    label: "not-submitted",
+    authenticationStatus: "NOT_SUBMITTED",
+    requestStatus: null,
+    verdict: null,
+    productStatus: "INACTIVE",
+    rawResponse: null,
+  },
+  {
+    label: "queued",
+    authenticationStatus: "PENDING",
+    requestStatus: "queued",
+    verdict: null,
+    productStatus: "INACTIVE",
+    rawResponse: {
+      id: "LG-QUEUED-001",
+      delivery_id: "del_queued_001",
+      status: "queued",
+      outcome: null,
+    },
+  },
+  {
+    label: "processing",
+    authenticationStatus: "PENDING",
+    requestStatus: "processing",
+    verdict: null,
+    productStatus: "INACTIVE",
+    rawResponse: {
+      id: "LG-PROCESSING-001",
+      delivery_id: "del_processing_001",
+      status: "processing",
+      outcome: null,
+    },
+  },
+  {
+    label: "update-photos",
+    authenticationStatus: "PENDING",
+    requestStatus: "update-photos",
+    verdict: null,
+    productStatus: "INACTIVE",
+    rawResponse: {
+      id: "LG-UPDATE-PHOTOS-001",
+      delivery_id: "del_update_photos_001",
+      status: "update-photos",
+      outcome: null,
+      photos_to_resubmit: [
+        { index_code: "overall-picture", reason: "The image is too blurry." },
+        { index_code: "serial-number", reason: "The serial number is not readable." },
+      ],
+    },
+  },
+  {
+    label: "verified",
+    authenticationStatus: "VERIFIED",
+    requestStatus: "completed",
+    verdict: "authentic",
+    productStatus: "ACTIVE",
+    certificateUrl: "https://cdn.legitgrails.com/certificates/verified-001.pdf",
+    rawResponse: {
+      id: "LG-VERIFIED-001",
+      delivery_id: "del_verified_001",
+      status: "completed",
+      outcome: "authentic",
+      certificate_url: "https://cdn.legitgrails.com/certificates/verified-001.pdf",
+    },
+  },
+  {
+    label: "fake",
+    authenticationStatus: "NOT_VERIFIED",
+    requestStatus: "completed",
+    verdict: "fake",
+    productStatus: "INACTIVE",
+    rawResponse: {
+      id: "LG-FAKE-001",
+      delivery_id: "del_fake_001",
+      status: "completed",
+      outcome: "fake",
+      outcome_reasons: ["The serial number does not match the product record."],
+    },
+  },
+  {
+    label: "unable-to-verify",
+    authenticationStatus: "NOT_VERIFIED",
+    requestStatus: "completed",
+    verdict: "unable-to-verify",
+    productStatus: "INACTIVE",
+    rawResponse: {
+      id: "LG-UNABLE-TO-VERIFY-001",
+      delivery_id: "del_unable_verify_001",
+      status: "completed",
+      outcome: "unable-to-verify",
+      outcome_reasons: ["The supplied images did not contain enough detail to verify authenticity."],
+    },
+  },
+  {
+    label: "error",
+    authenticationStatus: "PENDING",
+    requestStatus: "error",
+    verdict: null,
+    productStatus: "INACTIVE",
+    rawResponse: {
+      id: "LG-ERROR-001",
+      delivery_id: "del_error_001",
+      status: "error",
+      outcome: null,
+      error: "Image ingestion failed during processing.",
+    },
+  },
+];
+
 async function main() {
   console.log("Starting BestKid seed...");
 
@@ -158,7 +277,9 @@ async function main() {
   }
 
   const products = await seedProducts(sellers, categories);
+  await seedLegitGrailsProductFlows(sellers, products);
   const orderItems = await seedOrdersAndReturns(sellers, buyers, products);
+  await seedReturnRequests(orderItems);
   await seedBuyerCommerce(buyers, sellers, products);
   await seedProductReviews(orderItems);
   await seedChats(sellers, buyers);
@@ -337,7 +458,6 @@ async function seedProducts(
         await prisma.product.update({
           where: { id: existing.id },
           data: {
-            // Only a VERIFIED item can be ACTIVE — don't touch products already SOLD.
             status: existing.status === "SOLD" ? existing.status : isAuthenticated ? "ACTIVE" : "INACTIVE",
             authentication_status: authenticationStatus,
             is_authenticated: isAuthenticated,
@@ -368,7 +488,6 @@ async function seedProducts(
           subCategoryId: subCategory.id,
           userId: seller.id,
           condition: index % 2 === 0 ? "NEW" : "USED",
-          // Only a VERIFIED item can be ACTIVE — mirrors the LegitGrails authentication gate.
           status: isAuthenticated ? "ACTIVE" : "INACTIVE",
           is_authenticated: isAuthenticated,
           authentication_status: authenticationStatus,
@@ -385,6 +504,93 @@ async function seedProducts(
   }
 
   return products;
+}
+
+async function seedLegitGrailsProductFlows(sellers: SeedUser[], products: Record<number, { id: number; price: number }[]>) {
+  for (const seller of sellers) {
+    const productBase = products[seller.id]?.[0];
+    if (!productBase) {
+      continue;
+    }
+
+    for (const scenario of legitGrailsSeedScenarios) {
+      const scenarioAny = scenario as any;
+      const productName = `${seller.profile?.full_name ?? "Seller"} LegitGrails ${scenario.label}`;
+      const product = await prisma.product.findFirst({ where: { userId: seller.id, name: productName } });
+      const category = await prisma.category.findFirst({ orderBy: { id: "asc" } });
+      const subCategory = category ? await prisma.subCategory.findFirst({ where: { categoryId: category.id }, orderBy: { id: "asc" } }) : null;
+
+      const productData = {
+        name: productName,
+        description: `LegitGrails ${scenario.label} scenario for ${seller.profile?.full_name ?? "seller"}.`,
+        brand: ["Nike", "Adidas", "Zara Kids", "H&M Kids"][seller.id % 4],
+        original_price: productBase.price + 10,
+        discounted_price: productBase.price + 8,
+        discount_percentage: 10,
+        image_urls: ["/uploads/shoes.jpg"],
+        categoryId: category?.id ?? 1,
+        subCategoryId: subCategory?.id ?? 1,
+        userId: seller.id,
+        condition: "NEW" as const,
+        status: scenario.productStatus,
+        is_authenticated: scenario.authenticationStatus === "VERIFIED",
+        authentication_status: scenario.authenticationStatus,
+        approved_at: scenario.authenticationStatus === "VERIFIED" ? new Date() : null,
+        rejected_at: scenario.authenticationStatus === "NOT_VERIFIED" ? new Date() : null,
+      };
+
+      const createdProduct = product
+        ? await prisma.product.update({ where: { id: product.id }, data: productData })
+        : await prisma.product.create({ data: productData });
+
+      if (scenario.requestStatus) {
+        const externalOrderId = `LEGIT-${createdProduct.id}-${scenario.label}`;
+        const rawResponse = scenarioAny.rawResponse ?? null;
+        const certificateUrl = scenarioAny.certificateUrl ?? null;
+        const payload = {
+          id: externalOrderId,
+          delivery_id: `del_${createdProduct.id}_${scenario.label}`,
+          status: scenario.requestStatus,
+          outcome: scenario.verdict,
+          ...(rawResponse?.photos_to_resubmit ? { photos_to_resubmit: rawResponse.photos_to_resubmit } : {}),
+          ...(rawResponse?.outcome_reasons ? { outcome_reasons: rawResponse.outcome_reasons } : {}),
+          ...(certificateUrl ? { certificate_url: certificateUrl } : {}),
+        };
+
+        const existingRequest = await prisma.productAuthenticationRequest.findFirst({
+          where: {
+            productId: createdProduct.id,
+            provider: "LEGITGRAILS",
+            externalOrderId,
+          },
+        });
+
+        if (!existingRequest) {
+          await prisma.productAuthenticationRequest.create({
+            data: {
+              productId: createdProduct.id,
+              provider: "LEGITGRAILS",
+              externalOrderId,
+              status: scenario.requestStatus,
+              verdict: scenario.verdict ?? null,
+              certificateUrl: certificateUrl ?? null,
+              image_urls: ["/uploads/shoes.jpg"],
+              submittedAt: new Date(Date.now() - 60 * 60 * 1000),
+              completedAt: scenario.requestStatus === "completed" ? new Date() : null,
+              rawRequest: {
+                external_id: `bestkid-product-${createdProduct.id}-${scenario.label}`,
+                category_code: "bag",
+                brand_code: "nike",
+                answer_time: 720,
+                photos: [{ index_code: "overall-picture", url: "/uploads/shoes.jpg" }],
+              },
+              rawResponse: payload,
+            },
+          });
+        }
+      }
+    }
+  }
 }
 
 async function seedOrdersAndReturns(
@@ -458,19 +664,157 @@ async function seedOrdersAndReturns(
     }
   }
 
-  for (const [index, orderItem] of createdOrderItems.slice(0, 4).entries()) {
+  return createdOrderItems;
+}
+
+async function seedReturnRequests(
+  orderItems: { id: number; productId: number; userId: number }[],
+) {
+  const existingReturns = await prisma.returnRequest.count();
+
+  if (existingReturns > 0) {
+    console.log(`Skipping return request seeding: ${existingReturns} return requests already exist.`);
+    return;
+  }
+
+  if (orderItems.length === 0) {
+    console.log("No order items available for seeding return requests.");
+    return;
+  }
+
+  // Define diverse return request scenarios
+  const returnScenarios = [
+    {
+      reason: "Size did not fit",
+      message: "The item arrived in the specified size but it's too small for my child.",
+      status: "PENDING" as const,
+      images: ["/uploads/return-1.jpg"],
+      seller_response: null,
+      seller_rejection_reason: null,
+      return_address: "Return Center, 123 Return Street, Sofia 1000, Bulgaria",
+      resolved_at: null,
+      completed_at: null,
+      refunded_at: null,
+      refund_amount: null,
+    },
+    {
+      reason: "Item arrived damaged",
+      message: "The packaging was torn and the item inside has visible scratches and damage.",
+      status: "APPROVED" as const,
+      images: ["/uploads/return-damage-1.jpg", "/uploads/return-damage-2.jpg"],
+      seller_response: "Sorry to hear about the damage. We will send a replacement immediately.",
+      seller_rejection_reason: null,
+      return_address: "Return Center, 123 Return Street, Sofia 1000, Bulgaria",
+      resolved_at: new Date(new Date().getTime() - 2 * 24 * 60 * 60 * 1000),
+      completed_at: null,
+      refunded_at: null,
+      refund_amount: null,
+    },
+    {
+      reason: "Item does not match description",
+      message: "The color in the photos looks different from what arrived. The product is much darker.",
+      status: "PROCESSING" as const,
+      images: ["/uploads/return-mismatch.jpg"],
+      seller_response: "We apologize for the color discrepancy. We're processing your return now.",
+      seller_rejection_reason: null,
+      return_address: "Return Center, 123 Return Street, Sofia 1000, Bulgaria",
+      resolved_at: new Date(new Date().getTime() - 1 * 24 * 60 * 60 * 1000),
+      completed_at: null,
+      refunded_at: null,
+      refund_amount: null,
+    },
+    {
+      reason: "Changed mind",
+      message: "I don't think my child will enjoy this toy as much as I initially thought.",
+      status: "REJECTED" as const,
+      images: [],
+      seller_response: null,
+      seller_rejection_reason: "Change of mind returns are not eligible for refund per our policy.",
+      return_address: null,
+      resolved_at: new Date(new Date().getTime() - 3 * 24 * 60 * 60 * 1000),
+      completed_at: null,
+      refunded_at: null,
+      refund_amount: null,
+    },
+    {
+      reason: "Defective product",
+      message: "The wheels don't roll smoothly and there's a defect in the frame.",
+      status: "COMPLETED" as const,
+      images: ["/uploads/return-defect-1.jpg"],
+      seller_response: "Thank you for returning the defective item. Full refund has been processed.",
+      seller_rejection_reason: null,
+      return_address: "Return Center, 123 Return Street, Sofia 1000, Bulgaria",
+      resolved_at: new Date(new Date().getTime() - 5 * 24 * 60 * 60 * 1000),
+      completed_at: new Date(new Date().getTime() - 4 * 24 * 60 * 60 * 1000),
+      refunded_at: new Date(new Date().getTime() - 3 * 24 * 60 * 60 * 1000),
+      refund_amount: 29.99,
+    },
+    {
+      reason: "Missing parts",
+      message: "The package arrived incomplete. It's missing several pieces that were listed.",
+      status: "APPROVED" as const,
+      images: ["/uploads/return-missing.jpg"],
+      seller_response: "We apologize for the missing parts. We're sending them separately at no cost.",
+      seller_rejection_reason: null,
+      return_address: null,
+      resolved_at: new Date(new Date().getTime() - 2 * 24 * 60 * 60 * 1000),
+      completed_at: null,
+      refunded_at: null,
+      refund_amount: null,
+    },
+    {
+      reason: "Quality not as expected",
+      message: "The material quality is poor for the price. It feels cheap and fragile.",
+      status: "PENDING" as const,
+      images: ["/uploads/return-quality.jpg"],
+      seller_response: null,
+      seller_rejection_reason: null,
+      return_address: "Return Center, 123 Return Street, Sofia 1000, Bulgaria",
+      resolved_at: null,
+      completed_at: null,
+      refunded_at: null,
+      refund_amount: null,
+    },
+    {
+      reason: "Allergic reaction",
+      message: "My child developed a rash after wearing this. We suspect it's due to the material.",
+      status: "APPROVED" as const,
+      images: ["/uploads/return-allergy.jpg"],
+      seller_response: "We're very sorry to hear this. For your safety, we're processing a full refund.",
+      seller_rejection_reason: null,
+      return_address: "Return Center, 123 Return Street, Sofia 1000, Bulgaria",
+      resolved_at: new Date(new Date().getTime() - 1 * 24 * 60 * 60 * 1000),
+      completed_at: null,
+      refunded_at: null,
+      refund_amount: null,
+    },
+  ];
+
+  // Create return requests for available order items
+  for (let i = 0; i < Math.min(returnScenarios.length, orderItems.length); i++) {
+    const scenario = returnScenarios[i];
+    const orderItem = orderItems[i];
+
     await prisma.returnRequest.create({
       data: {
         orderItemId: orderItem.id,
         userId: orderItem.userId,
-        reason: index % 2 === 0 ? "Size did not fit" : "Item arrived damaged",
-        images: [],
-        status: index === 0 ? "PENDING" : index === 1 ? "APPROVED" : "REJECTED",
+        reason: scenario.reason,
+        message: scenario.message,
+        images: scenario.images,
+        status: scenario.status,
+        seller_response: scenario.seller_response,
+        seller_rejection_reason: scenario.seller_rejection_reason,
+        return_address: scenario.return_address,
+        resolved_at: scenario.resolved_at,
+        completed_at: scenario.completed_at,
+        refunded_at: scenario.refunded_at,
+        refund_amount: scenario.refund_amount,
       },
     });
   }
 
-  return createdOrderItems;
+  console.log(`Seeded ${Math.min(returnScenarios.length, orderItems.length)} return requests.`);
 }
 
 async function seedBuyerCommerce(

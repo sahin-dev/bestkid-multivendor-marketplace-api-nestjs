@@ -1,61 +1,54 @@
 import { AuthenticationStatus } from "generated/prisma/client";
 
+export type LegitGrailsOrderStatus = "queued" | "processing" | "update-photos" | "completed" | "error";
+export type LegitGrailsOutcome = "authentic" | "fake" | "unable-to-verify" | "canceled";
+
 export type LegitGrailsMappedResult = {
     externalOrderId?: string;
+    deliveryId?: string;
     providerStatus: string;
-    verdict?: string;
+    outcome?: LegitGrailsOutcome;
     productStatus: AuthenticationStatus;
+    isTerminal: boolean;
+    hasVerdict: boolean;
     certificateUrl?: string;
-    reportUrl?: string;
-    completed: boolean;
+    outcomeReasons?: string[];
+    outcomeIndexes?: string[];
+    photosToResubmit?: unknown[];
 };
 
+/**
+ * Maps a LegitGrails order detail response (GET /orders/{id}) or webhook payload
+ * (order-outcome / update-photos) to our internal representation. Both share the
+ * order-detail schema per LegitGrails' docs.
+ */
 export function mapLegitGrailsResult(payload: any): LegitGrailsMappedResult {
-    const externalOrderId = stringValue(
-        payload?.id ??
-            payload?.order_id ??
-            payload?.orderId ??
-            payload?.request_id ??
-            payload?.requestId ??
-            payload?.authentication_id ??
-            payload?.authenticationId,
-    );
-    const rawStatus = stringValue(payload?.status ?? payload?.state) ?? "SUBMITTED";
-    const verdict = stringValue(payload?.verdict ?? payload?.result ?? payload?.outcome);
-    const normalized = `${rawStatus} ${verdict ?? ""}`.toLowerCase();
+    const externalOrderId = stringValue(payload?.id);
+    const deliveryId = stringValue(payload?.delivery_id);
+    const status = stringValue(payload?.status) ?? "queued";
+    const outcome = stringValue(payload?.outcome) as LegitGrailsOutcome | undefined;
 
-    if (/(authentic|verified|approved|pass|passed|genuine)/i.test(normalized) && !/(not authentic|fake|rejected|failed)/i.test(normalized)) {
-        return {
-            externalOrderId,
-            providerStatus: rawStatus,
-            verdict,
-            productStatus: AuthenticationStatus.VERIFIED,
-            certificateUrl: stringValue(payload?.certificate_url ?? payload?.certificateUrl ?? payload?.certificate?.url),
-            reportUrl: stringValue(payload?.report_url ?? payload?.reportUrl ?? payload?.report?.url),
-            completed: true,
-        };
-    }
-
-    if (/(not authentic|fake|rejected|failed|counterfeit)/i.test(normalized)) {
-        return {
-            externalOrderId,
-            providerStatus: rawStatus,
-            verdict,
-            productStatus: AuthenticationStatus.NOT_VERIFIED,
-            certificateUrl: stringValue(payload?.certificate_url ?? payload?.certificateUrl ?? payload?.certificate?.url),
-            reportUrl: stringValue(payload?.report_url ?? payload?.reportUrl ?? payload?.report?.url),
-            completed: true,
-        };
-    }
+    // Only a completed order with a genuine verdict (authentic/fake/unable-to-verify) should
+    // move the product out of PENDING; `canceled` and `error` leave it for manual follow-up.
+    const productStatus =
+        status === "completed" && outcome === "authentic"
+            ? AuthenticationStatus.VERIFIED
+            : status === "completed" && (outcome === "fake" || outcome === "unable-to-verify")
+              ? AuthenticationStatus.NOT_VERIFIED
+              : AuthenticationStatus.PENDING;
 
     return {
         externalOrderId,
-        providerStatus: rawStatus,
-        verdict,
-        productStatus: AuthenticationStatus.PENDING,
-        certificateUrl: stringValue(payload?.certificate_url ?? payload?.certificateUrl ?? payload?.certificate?.url),
-        reportUrl: stringValue(payload?.report_url ?? payload?.reportUrl ?? payload?.report?.url),
-        completed: false,
+        deliveryId,
+        providerStatus: status,
+        outcome,
+        productStatus,
+        isTerminal: status === "completed" || status === "error",
+        hasVerdict: productStatus !== AuthenticationStatus.PENDING,
+        certificateUrl: stringValue(payload?.certificate_url),
+        outcomeReasons: Array.isArray(payload?.outcome_reasons) ? payload.outcome_reasons : undefined,
+        outcomeIndexes: Array.isArray(payload?.outcome_indexes) ? payload.outcome_indexes : undefined,
+        photosToResubmit: Array.isArray(payload?.photos_to_resubmit) ? payload.photos_to_resubmit : undefined,
     };
 }
 

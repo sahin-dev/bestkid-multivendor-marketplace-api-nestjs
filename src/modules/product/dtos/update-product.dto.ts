@@ -25,6 +25,11 @@ export class UpdateProductDto {
     })
     description?: string;
 
+    @IsString()
+    @IsOptional()
+    @ApiProperty({ required: false, example: "Grade 3", description: "Target school grade for the product" })
+    grade?: string;
+
     @IsNumber()
     @IsPositive()
     @IsOptional()

@@ -22,8 +22,8 @@ import { OtpPurpose } from 'generated/prisma/enums';
 
 describe('AuthService.verifyOtp', () => {
   let service: AuthService;
-  let userService: { emailVerified: jest.Mock; getUserByEmail: jest.Mock };
-  let authProvider: { signToken: jest.Mock };
+  let userService: { emailVerified: jest.Mock; getUserByEmail: jest.Mock; updateFcmToken: jest.Mock };
+  let authProvider: { signToken: jest.Mock; authenticate: jest.Mock };
   let otpService: { verifyOtp: jest.Mock; create: jest.Mock };
   let smtpProvider: { sendMail: jest.Mock };
 
@@ -40,9 +40,14 @@ describe('AuthService.verifyOtp', () => {
         email: 'user@example.com',
         profile: { full_name: 'Test User' },
       }),
+      updateFcmToken: jest.fn().mockResolvedValue({
+        id: 42,
+        fcmToken: 'new-fcm-token',
+      }),
     };
     authProvider = {
       signToken: jest.fn().mockReturnValue('jwt-token'),
+      authenticate: jest.fn().mockResolvedValue('jwt-token'),
     };
     otpService = {
       verifyOtp: jest.fn().mockResolvedValue({ userId: 42, purpose: OtpPurpose.EMAIL_VERIFICATION }),
@@ -106,5 +111,14 @@ describe('AuthService.verifyOtp', () => {
     expect(otpService.create).toHaveBeenCalled();
     expect(smtpProvider.sendMail).toHaveBeenCalled();
     expect(result).toEqual({ message: 'If that email is registered, an OTP has been sent.', requestId: 'req-reset' });
+  });
+
+  it('updates the user FCM token during login when provided', async () => {
+    const result = await service.login({ email: 'user@example.com', password: 'password123', fcmToken: 'new-fcm-token' } as any);
+
+    expect(authProvider.authenticate).toHaveBeenCalledWith('user@example.com', 'password123');
+    expect(userService.getUserByEmail).toHaveBeenCalledWith('user@example.com');
+    expect(userService.updateFcmToken).toHaveBeenCalledWith(42, 'new-fcm-token');
+    expect(result).toBe('jwt-token');
   });
 });

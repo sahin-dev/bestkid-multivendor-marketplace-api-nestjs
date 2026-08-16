@@ -65,7 +65,7 @@ export class ReturnService {
                 orderItem.order.sellerId,
                 "New Return Request Received",
                 `A return request has been submitted for order item #${orderItem.id}.`,
-                NotificationType.ORDER,
+                NotificationType.RETURN,
             );
         } catch (e) {
             console.error("Failed to send notification to seller", e);
@@ -201,7 +201,7 @@ export class ReturnService {
                 request.userId,
                 "Return Request Status Update",
                 `Your return request for item #${request.orderItem.id} has been ${dto.status}.`,
-                NotificationType.ORDER,
+                NotificationType.RETURN,
             );
         } catch (e) {
             console.error("Failed to notify buyer", e);
