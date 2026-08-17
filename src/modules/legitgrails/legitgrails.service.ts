@@ -80,14 +80,17 @@ export class LegitGrailsService {
 
         try {
             const response = await this.client.createOrder(orderPayload);
-
-    
             const now = new Date();
+            const mappedTestResponse = this.config.test_mode ? mapLegitGrailsResult(response) : null;
 
-            await this.prismaService.product.update({
-                where: { id: productId },
-                data: { authentication_status: AuthenticationStatus.PENDING },
-            });
+             if (this.config.test_mode && mappedTestResponse?.hasVerdict) {
+                await this.applyProductStatus(productId, mappedTestResponse.productStatus, now);
+            } else {
+                await this.prismaService.product.update({
+                    where: { id: productId },
+                    data: { authentication_status: AuthenticationStatus.PENDING },
+                });
+            }
 
             return await this.prismaService.productAuthenticationRequest.update({
                 where: { id: localRequest.id },

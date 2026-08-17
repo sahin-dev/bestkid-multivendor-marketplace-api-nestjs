@@ -18,7 +18,7 @@ import { CreateReviewDto } from "../product/dtos/create-review.dto";
 export class OrderController {
     constructor(private readonly orderService: OrderService) {}
 
-    @Post()
+   
     @ApiOperation({ summary: "Create an order directly from submitted items", description: "Creates an order for the authenticated buyer. Checkout from cart is preferred for multi-seller carts." })
     @ApiBody({ type: CreateOrderDto })
     @ApiResponse({ status: 201, description: "Order created" })

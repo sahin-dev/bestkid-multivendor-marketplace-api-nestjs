@@ -27,6 +27,7 @@ model Order {
   stripe_checkout_session_id String? @unique
 
   items    OrderItem[]
+  payment_transactions PaymentTransaction[]
   user     BaseUser    @relation("BuyerOrders",  fields: [userId],   references: [id])
   seller   BaseUser    @relation("SellerOrders", fields: [sellerId], references: [id])
 

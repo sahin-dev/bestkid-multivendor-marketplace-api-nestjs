@@ -30,6 +30,7 @@ import { SellerModule } from './modules/seller/seller.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { CouponModule } from './modules/coupon/coupon.module';
 import { WishlistModule } from './modules/wishlist/wishlist.module';
+import { PaymentModule } from './modules/payment/payment.module';
 import { SentryModule } from '@sentry/nestjs/setup';
 import { LegitGrailsModule } from './modules/legitgrails/legitgrails.module';
 import { CurrencyConversionService } from './modules/currency/currency.service';
@@ -60,6 +61,7 @@ import { CurrencyConversionService } from './modules/currency/currency.service';
     AdminModule,
     CouponModule,
     WishlistModule,
+    PaymentModule,
     LegitGrailsModule,
   ],
   controllers: [AppController],

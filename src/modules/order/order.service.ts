@@ -62,10 +62,6 @@ export class OrderService {
         // Create the order inside a database transaction, atomically claiming each
         // product so two concurrent buyers can never both check out the same unique item.
         return this.prismaService.$transaction(async (tx) => {
-            for (const item of itemsToCreate) {
-                await this.claimProductForSale(tx, item.productId, productMap.get(item.productId)!.name);
-            }
-
             const order = await tx.order.create({
                 data: {
                     userId,
@@ -129,10 +125,6 @@ export class OrderService {
 
         await this.prismaService.$transaction(async (tx) => {
             for (const group of summary.seller_groups) {
-                for (const item of group.items) {
-                    await this.claimProductForSale(tx, item.productId, item.product.name);
-                }
-
                 const order = await tx.order.create({
                     data: {
                         userId,
@@ -242,8 +234,6 @@ export class OrderService {
         let order: any;
         try {
             order = await this.prismaService.$transaction(async (tx) => {
-                await this.claimProductForSale(tx, item.productId, item.product.name);
-
                 const createdOrder = await tx.order.create({
                     data: {
                         userId,
@@ -1212,20 +1202,197 @@ export class OrderService {
     }
 
     /**
+     * Create pending orders for cart checkout (before Stripe session is created).
+     * Does NOT delete cart items — those are deleted only on webhook payment success.
+     */
+    async createPendingCartOrders(userId: number, dto: CheckoutDto) {
+        const checkoutAddress = await this.resolveCheckoutAddress(userId, dto);
+        const summary = await this.buildCheckoutSummary(userId, {
+            sellerIds: dto.sellerIds,
+            cartItemIds: dto.cartItemIds,
+            addressId: dto.addressId,
+            country: checkoutAddress.country ?? undefined,
+            couponCode: dto.couponCode,
+        });
+
+        const createdOrders: any[] = [];
+
+        await this.prismaService.$transaction(async (tx) => {
+            for (const group of summary.seller_groups) {
+                const order = await tx.order.create({
+                    data: {
+                        userId,
+                        sellerId: group.seller.id,
+                        status: OrderStatus.PENDING,
+                        total: group.total,
+                        delivery_partner: group.delivery.partner,
+                        delivery_cost: group.delivery.cost,
+                        delivery_days_min: group.delivery.days_min,
+                        delivery_days_max: group.delivery.days_max,
+                        shippingAddress: checkoutAddress.shippingAddress,
+                        city: checkoutAddress.city,
+                        postalCode: checkoutAddress.postalCode,
+                        country: checkoutAddress.country,
+                        items: {
+                            create: group.items.map((item) => ({
+                                productId: item.productId,
+                                price: item.price,
+                            })),
+                        },
+                    },
+                    include: { items: true },
+                });
+                createdOrders.push(order);
+            }
+        });
+
+        return { orders: createdOrders, cart_id: summary.cart_id, coupon_id: summary.coupon?.id };
+    }
+
+    /**
+     * Create a pending buy-now order (before Stripe session is created).
+     */
+    async createPendingBuyNowOrder(
+        userId: number,
+        dto: Omit<CreateBuyNowCheckoutSessionDto, "successUrl" | "cancelUrl">,
+    ) {
+        const checkoutAddress = await this.resolveCheckoutAddress(userId, dto);
+        const summary = await this.buildBuyNowCheckoutSummary(userId, {
+            productId: dto.productId,
+            addressId: dto.addressId,
+            shippingAddress: checkoutAddress.shippingAddress ?? undefined,
+            city: checkoutAddress.city ?? undefined,
+            postalCode: checkoutAddress.postalCode ?? undefined,
+            country: checkoutAddress.country ?? undefined,
+        });
+
+        const group = summary.seller_groups[0];
+        const item = group.items[0];
+
+        if (!group.delivery || group.total === null || group.delivery_cost === null) {
+            throw new BadRequestException("Select a shipping address before checkout.");
+        }
+
+        const order = await this.prismaService.$transaction(async (tx) => {
+            const createdOrder = await tx.order.create({
+                data: {
+                    userId,
+                    sellerId: group.seller.id,
+                    status: OrderStatus.PENDING,
+                    total: group.total,
+                    delivery_partner: group.delivery.partner,
+                    delivery_cost: group.delivery_cost,
+                    delivery_days_min: group.delivery.days_min,
+                    delivery_days_max: group.delivery.days_max,
+                    shippingAddress: checkoutAddress.shippingAddress,
+                    city: checkoutAddress.city,
+                    postalCode: checkoutAddress.postalCode,
+                    country: checkoutAddress.country,
+                    items: {
+                        create: {
+                            productId: item.productId,
+                            price: item.price,
+                        },
+                    },
+                },
+                include: { items: true },
+            });
+            return createdOrder;
+        });
+
+        return { order };
+    }
+
+    /**
+     * Confirm a pending order (transition from PENDING to CONFIRMED).
+     * Called by the Stripe webhook after payment is verified.
+     * Only sets stripe_checkout_session_id for buy-now orders (where there's 1:1 mapping).
+     * For cart orders, session ID is in the payment transaction.
+     */
+    async confirmOrder(orderId: number, stripeCheckoutSessionId?: string, isBuyNow = false) {
+        const existing = await this.prismaService.order.findUnique({
+            where: { id: orderId },
+            select: { id: true, status: true },
+        });
+
+        if (existing?.status === OrderStatus.CONFIRMED) {
+            return existing;
+        }
+
+        const timelineUpdate = this.getOrderTimelineUpdate(OrderStatus.CONFIRMED);
+
+        // Only set stripe_checkout_session_id for buy-now orders to avoid unique constraint violation
+        const updateData: any = {
+            status: OrderStatus.CONFIRMED,
+            ...timelineUpdate,
+        };
+
+        if (isBuyNow && stripeCheckoutSessionId) {
+            updateData.stripe_checkout_session_id = stripeCheckoutSessionId;
+        }
+
+        const confirmed = await this.prismaService.order.update({
+            where: { id: orderId },
+            data: updateData,
+            include: { items: true },
+        });
+
+        return confirmed;
+    }
+
+    /**
      * Atomically flips a single-unit product from ACTIVE to SOLD. The WHERE guard makes this
      * safe under concurrency — if two buyers race to check out the same item, only the first
      * `updateMany` inside this transaction affects a row; the loser sees count 0 and is rejected
      * instead of both orders succeeding.
      */
-    private async claimProductForSale(tx: Prisma.TransactionClient, productId: number, productName: string) {
-        const claimed = await tx.product.updateMany({
-            where: { id: productId, status: ProductStatus.ACTIVE, authentication_status: AuthenticationStatus.VERIFIED },
-            data: { status: ProductStatus.SOLD, sold_at: new Date() },
+    async markProductsSoldForOrder(orderId: number) {
+        const order = await this.prismaService.order.findUnique({
+            where: { id: orderId },
+            include: { items: true },
         });
 
-        if (claimed.count === 0) {
-            throw new ConflictException(`${productName} was just sold and is no longer available.`);
+        if (!order) {
+            throw new NotFoundException(`Order with ID ${orderId} not found`);
         }
+
+        if (order.status === OrderStatus.CONFIRMED) {
+            const productIds = [...new Set(order.items.map((item) => item.productId))];
+            const alreadySold = await this.prismaService.product.findMany({
+                where: { id: { in: productIds }, status: ProductStatus.SOLD },
+                select: { id: true },
+            });
+
+            if (alreadySold.length === productIds.length) {
+                return;
+            }
+        }
+
+        const productIds = [...new Set(order.items.map((item) => item.productId))];
+        if (productIds.length === 0) {
+            return;
+        }
+
+        await this.prismaService.$transaction(async (tx) => {
+            for (const productId of productIds) {
+                const claimed = await tx.product.updateMany({
+                    where: {
+                        id: productId,
+                        status: ProductStatus.ACTIVE,
+                        authentication_status: AuthenticationStatus.VERIFIED,
+                    },
+                    data: { status: ProductStatus.SOLD, sold_at: new Date() },
+                });
+
+                if (claimed.count === 0) {
+                    const product = await tx.product.findUnique({ where: { id: productId }, select: { name: true, status: true } });
+                    if (product?.status === ProductStatus.SOLD) {
+                        return;
+                    }
+                    throw new ConflictException(`${product?.name ?? "Product"} was just sold and is no longer available.`);
+                }
+            }
+        });
     }
 
     /**

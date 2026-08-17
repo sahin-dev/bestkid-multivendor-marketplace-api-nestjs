@@ -29,6 +29,7 @@ model BaseUser {
   recently_viewed RecentlyView[]
   buyer_orders    Order[]    @relation("BuyerOrders")
   seller_orders   Order[]    @relation("SellerOrders")
+  payment_transactions PaymentTransaction[]
   return_requests ReturnRequest[]
   delivery_option SellerDeliveryOption?
   addresses       UserAddress[]

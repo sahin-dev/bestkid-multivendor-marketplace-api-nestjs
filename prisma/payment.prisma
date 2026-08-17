@@ -1,0 +1,40 @@
+model PaymentTransaction {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  orderId   Int?
+  amount    Float
+  currency  String   @default("eur")
+  provider  PaymentProvider @default(STRIPE)
+  status    PaymentStatus @default(PENDING)
+
+  stripe_session_id       String? @unique
+  stripe_payment_intent_id String?
+  stripe_customer_id      String?
+
+  payment_status          String?
+  metadata                Json?
+
+  user    BaseUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  order   Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("payment_transactions")
+  @@index([userId])
+  @@index([orderId])
+  @@index([stripe_session_id])
+}
+
+enum PaymentProvider {
+  STRIPE
+}
+
+enum PaymentStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  REFUNDED
+}
