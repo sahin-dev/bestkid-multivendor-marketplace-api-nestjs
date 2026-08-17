@@ -293,6 +293,10 @@ export class ProductService {
                                 profile: { select: { full_name: true, avatar_url: true, country: true } },
                             },
                         },
+                        authentication_requests: {
+                            orderBy: [{ createdAt: Prisma.SortOrder.desc }],
+                            take: 1,
+                        },
                     },
                 orderBy,
             }),
@@ -304,7 +308,10 @@ export class ProductService {
         const items = this.withWishlistState(data, wishlistedIds);
 
         const convertedItems = await Promise.all(
-            items.map(async (product) => this.applyUserCurrency(product, userCurrency)),
+            items.map(async (product) => {
+                const merged = this.mergeProductImageUrls(product);
+                return this.applyUserCurrency(merged, userCurrency);
+            }),
         );
 
         return {
@@ -347,6 +354,10 @@ export class ProductService {
                         },
                     },
                 },
+                authentication_requests: {
+                    orderBy: [{ createdAt: Prisma.SortOrder.desc }],
+                    take: 1,
+                },
             },
         });
 
@@ -378,9 +389,9 @@ export class ProductService {
             this.findRelatedProducts(id, product.categoryId, userId),
         ]);
 
-        const convertedProduct = await this.applyUserCurrency(product, userCurrency);
+        const convertedProduct = await this.applyUserCurrency(this.mergeProductImageUrls(product), userCurrency);
         const convertedRelatedProducts = await Promise.all(
-            relatedProducts.map(async (item) => this.applyUserCurrency(item, userCurrency)),
+            relatedProducts.map(async (item) => this.applyUserCurrency(this.mergeProductImageUrls(item), userCurrency)),
         );
 
         return {
@@ -768,6 +779,17 @@ export class ProductService {
         });
 
         return Boolean(item);
+    }
+
+    private mergeProductImageUrls(product: any) {
+        const productImages = Array.isArray(product?.image_urls) ? product.image_urls : [];
+        const authImages = Array.isArray(product?.authentication_requests?.[0]?.image_urls)
+            ? product.authentication_requests[0].image_urls
+            : [];
+
+        const merged = [...productImages, ...authImages].filter((value, index, array) => value && array.indexOf(value) === index);
+
+        return { ...product, image_urls: merged, image_url: merged[0] ?? null };
     }
 
     private async getSellerStats(sellerId: number) {
