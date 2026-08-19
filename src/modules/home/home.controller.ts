@@ -1,7 +1,7 @@
 import { Controller, Get, Query, Req } from '@nestjs/common';
-import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { PaginationDto } from 'src/common/dtos/pagination.dto';
-import { Public } from 'src/common/decorators';
+import { GetUser, Public } from 'src/common/decorators';
 import { HomeService } from './home.service';
 import type { Request } from 'express';
 
@@ -59,5 +59,19 @@ export class HomeController {
       };
     }
     return this.homeService.getRecentlyViewedForUser(user.id, query);
+  }
+
+  @Get('featured-coupon')
+  @Public()
+  @ApiOperation({ summary: 'Get the currently featured coupon details' })
+  getFeaturedCoupon() {
+    return this.homeService.getFeaturedCoupon();
+  }
+
+  @Get('preferences')
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: 'Get the logged-in user currency and language preferences' })
+  getUserPreferences(@GetUser('id') userId: number) {
+    return this.homeService.getUserPreferences(userId);
   }
 }

@@ -12,6 +12,7 @@ model Coupon {
   start_date      DateTime
   end_date        DateTime
   is_active       Boolean            @default(true)
+  featured        Boolean            @default(false)
 
   category    Category?    @relation(fields: [categoryId], references: [id])
   subCategory SubCategory? @relation(fields: [subCategoryId], references: [id])

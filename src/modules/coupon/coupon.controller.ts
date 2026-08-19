@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
-import { Roles } from "src/common/decorators";
+import { Public, Roles } from "src/common/decorators";
 import { CouponService } from "./coupon.service";
 import { CouponQueryDto, CouponStatusFilter } from "./dtos/coupon-query.dto";
 import { CreateCouponDto, UpdateCouponDto } from "./dtos/upsert-coupon.dto";

@@ -90,7 +90,8 @@ export class ProductController {
         @Param("id", ParseIntPipe) productId: number,
         @GetUser() payload: TokenPayload,
     ) {
-        return this.productService.findSellerProductById(productId, payload.id, payload.role === "ADMIN");
+        const response =  await this.productService.findSellerProductById(productId, payload.id, payload.role === "ADMIN");
+        return response;
     }
 
     @Patch("seller/:id/status")
@@ -125,8 +126,8 @@ export class ProductController {
     @ApiOperation({ summary: "Get product details" })
     @ApiParam({ name: "id", type: Number })
     async findProductById(@Param("id", ParseIntPipe) id: number, @Req() req: Request) {
-        const user = req["payload"] as { id: number } | undefined;
-        return this.productService.findProductById(id, user?.id);
+        const user = req["payload"] as { id?: number; role?: string } | undefined;
+        return this.productService.findProductById(id, user?.id, user?.role === "ADMIN");
     }
 
     @Patch(":id")

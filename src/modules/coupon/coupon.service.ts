@@ -89,6 +89,29 @@ export class CouponService {
         return this.formatCoupon(coupon);
     }
 
+    async getFeaturedCoupon() {
+        const now = new Date();
+        const coupon = await this.prismaService.coupon.findFirst({
+            where: {
+                featured: true,
+                is_active: true,
+                start_date: { lte: now },
+                end_date: { gte: now },
+            },
+            include: {
+                category: true,
+                subCategory: true,
+            },
+            orderBy: { createdAt: "desc" },
+        });
+
+        if (!coupon) {
+            throw new NotFoundException("No featured coupon is currently available");
+        }
+
+        return this.formatCoupon(coupon);
+    }
+
     async create(dto: CreateCouponDto) {
         await this.validateCouponInput(dto);
 
@@ -99,12 +122,22 @@ export class CouponService {
             throw new ConflictException("Coupon code already exists");
         }
 
-        const coupon = await this.prismaService.coupon.create({
-            data: this.toCouponData(dto) as any,
-            include: {
-                category: true,
-                subCategory: true,
-            },
+        const featured = dto.featured ?? false;
+        const coupon = await this.prismaService.$transaction(async (tx) => {
+            if (featured) {
+                await tx.coupon.updateMany({
+                    where: { featured: true },
+                    data: { featured: false },
+                });
+            }
+
+            return tx.coupon.create({
+                data: this.toCouponData(dto) as any,
+                include: {
+                    category: true,
+                    subCategory: true,
+                },
+            });
         });
 
         return this.formatCoupon(coupon);
@@ -127,13 +160,23 @@ export class CouponService {
             }
         }
 
-        const coupon = await this.prismaService.coupon.update({
-            where: { id },
-            data: this.toCouponData(dto) as any,
-            include: {
-                category: true,
-                subCategory: true,
-            },
+        const featured = dto.featured ?? existing.featured ?? false;
+        const coupon = await this.prismaService.$transaction(async (tx) => {
+            if (featured) {
+                await tx.coupon.updateMany({
+                    where: { featured: true, id: { not: id } },
+                    data: { featured: false },
+                });
+            }
+
+            return tx.coupon.update({
+                where: { id },
+                data: this.toCouponData(dto) as any,
+                include: {
+                    category: true,
+                    subCategory: true,
+                },
+            });
         });
 
         return this.formatCoupon(coupon);
@@ -220,6 +263,7 @@ export class CouponService {
         if (dto.start_date !== undefined) data.start_date = new Date(dto.start_date);
         if (dto.end_date !== undefined) data.end_date = new Date(dto.end_date);
         if (dto.is_active !== undefined) data.is_active = dto.is_active;
+        if (dto.featured !== undefined) data.featured = dto.featured;
 
         return data;
     }
@@ -246,6 +290,7 @@ export class CouponService {
             status,
             value,
             usage,
+            featured: Boolean(coupon.featured),
             discount_category: coupon.subCategory ?? coupon.category ?? null,
             remaining_uses:
                 coupon.usage_type === CouponUsageType.LIMITED && coupon.usage_limit

@@ -151,11 +151,13 @@ export class ProductService {
     }
 
     async findSellerProductById(productId: number, sellerId: number, isAdmin = false) {
-        const product = await this.getProductForMutation(productId);
-        this.assertCanMutateProduct(product, sellerId, isAdmin);
 
-        const [reviews, ordersCount] = await Promise.all([
-            this.findReviews(productId, { page: 1, limit: 5 }),
+        const product = await this.getProductForMutation(productId);
+    
+        this.assertCanMutateProduct(product, sellerId, isAdmin);
+        try{
+            const [reviews, ordersCount] = await Promise.all([
+            this.findReviews(productId,{ page: 1, limit: 5 },sellerId ),
             this.prismaService.order.count({
                 where: {
                     sellerId: product.userId,
@@ -163,8 +165,7 @@ export class ProductService {
                 },
             }),
         ]);
-
-        return {
+         return {
             ...this.formatSellerProductDetail(product),
             reviews: reviews.data,
             orders_count: ordersCount,
@@ -177,6 +178,12 @@ export class ProductService {
                 can_delete: true,
             },
         };
+        }catch(err){
+            console.log(err)
+        }
+        
+
+       
     }
 
     async updateSellerProductStatus(productId: number, sellerId: number, status: ProductStatus, isAdmin = false) {
@@ -325,20 +332,15 @@ export class ProductService {
         };
     }
 
-    async findProductById(id: number, userId?: number) {
+    async findProductById(id: number, userId?: number, isAdmin = false) {
+
         const userCurrency = userId ? await this.getUserCurrency(userId) : CurrencyPreference.USD;
+       
         const product = await this.prismaService.product.findUnique({
             where: { id },
             include: {
                 user: {
-                    select: {
-                        id: true,
-                        email: true,
-                        seller_tier: true,
-                        stripe_onboarding_complete: true,
-                        profile: { select: { full_name: true, avatar_url: true, country: true } },
-                        delivery_option: true,
-                    },
+                    
                 },
                 category: true,
                 subCategory: true,
@@ -361,11 +363,15 @@ export class ProductService {
             },
         });
 
+        
+       
         if (!product) {
+           
             throw new NotFoundException(`Product with ID ${id} not found`);
         }
 
-        if (userId && product.userId === userId) {
+        const isOwner = userId !== undefined && product.userId === userId;
+        if (product.status !== ProductStatus.ACTIVE && !isOwner && !isAdmin) {
             throw new NotFoundException(`Product with ID ${id} not found`);
         }
 
@@ -510,8 +516,8 @@ export class ProductService {
         return newReview;
     }
 
-    async findReviews(productId: number, query: PaginationDto = { page: 1, limit: 10 }) {
-        await this.findProductById(productId);
+    async findReviews(productId: number, query: PaginationDto = { page: 1, limit: 10 },sellerId?:number) {
+        await this.findProductById(productId, sellerId);
 
         const { page = 1, limit = 10 } = query ?? {};
         const skip = (page - 1) * limit;
@@ -1024,6 +1030,7 @@ export class ProductService {
             where: { id },
             include: this.getSellerProductInclude(),
         });
+        
         if (!product) {
             throw new NotFoundException(`Product with ID ${id} not found`);
         }

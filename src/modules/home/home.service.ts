@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { ProductStatus } from 'generated/prisma/client';
 import { PaginationDto } from 'src/common/dtos/pagination.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -183,6 +183,54 @@ export class HomeService {
     return {
       data: this.withWishlistState(products, wishlistedIds),
       meta: { total, page, limit, pages: Math.ceil(total / limit) },
+    };
+  }
+
+  async getFeaturedCoupon() {
+    const now = new Date();
+    const coupon = await this.prismaService.coupon.findFirst({
+      where: {
+        featured: true,
+        is_active: true,
+        start_date: { lte: now },
+        end_date: { gte: now },
+      },
+      include: {
+        category: true,
+        subCategory: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!coupon) {
+      throw new NotFoundException('No featured coupon is currently available');
+    }
+
+    return {
+      ...coupon,
+      status: coupon.is_active && coupon.start_date <= now && coupon.end_date >= now ? 'ACTIVE' : 'INACTIVE',
+      discount_category: coupon.subCategory ?? coupon.category ?? null,
+    };
+  }
+
+  async getUserPreferences(userId: number) {
+    const user = await this.prismaService.baseUser.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        currency_preference: true,
+        language_preference: true,
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    return {
+      id: user.id,
+      currency_preference: user.currency_preference,
+      language_preference: user.language_preference,
     };
   }
 
