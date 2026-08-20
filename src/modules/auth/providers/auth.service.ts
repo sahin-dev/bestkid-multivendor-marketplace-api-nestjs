@@ -50,6 +50,14 @@ export class AuthService {
 
     async login(singinDto: SigninDto): Promise<string | Record<string, any>> {
         const tokenOrUser = await this.authProvider.authenticate(singinDto.email, singinDto.password)
+
+        if (typeof tokenOrUser === "string" && singinDto.fcmToken) {
+            const user = await this.userService.getUserByEmail(singinDto.email)
+            if (user) {
+                await this.userService.updateFcmToken(user.id, singinDto.fcmToken)
+            }
+        }
+
         return tokenOrUser
     }
 
@@ -78,6 +86,10 @@ export class AuthService {
             role: user.role,
             email: user.email,
         })
+
+        if (signinDto.fcmToken) {
+            await this.userService.updateFcmToken(user.id, signinDto.fcmToken)
+        }
 
         return {
             access_token: token,

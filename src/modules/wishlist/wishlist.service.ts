@@ -22,7 +22,6 @@ export class WishlistService {
                         include: {
                             category: true,
                             subCategory: true,
-                            variants: true,
                             user: {
                                 select: {
                                     id: true,

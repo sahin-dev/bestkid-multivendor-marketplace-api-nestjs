@@ -369,7 +369,6 @@ export class GlobalHttpExceptionHandler implements ExceptionFilter{
             { field: "chatRoomId", entity: "Chat room", aliases: ["chatRoomId", "chat_room_id", "chatRoom"] },
             { field: "categoryId", entity: "Category", aliases: ["categoryId", "category_id", "category"] },
             { field: "productId", entity: "Product", aliases: ["productId", "product_id", "product"] },
-            { field: "variantId", entity: "Product variant", aliases: ["variantId", "variant_id", "variant", "productVariantId"] },
             { field: "sellerId", entity: "Seller", aliases: ["sellerId", "seller_id", "seller"] },
             { field: "buyerId", entity: "Buyer", aliases: ["buyerId", "buyer_id", "buyer"] },
             { field: "senderId", entity: "Sender", aliases: ["senderId", "sender_id", "sender"] },

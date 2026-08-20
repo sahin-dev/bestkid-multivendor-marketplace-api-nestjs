@@ -59,6 +59,11 @@ export class CreateCouponDto {
     @IsBoolean()
     @ApiPropertyOptional({ default: true })
     is_active?: boolean;
+
+    @IsOptional()
+    @IsBoolean()
+    @ApiPropertyOptional({ default: false, description: "Set this coupon as the featured offer. Only one featured coupon can be active at a time." })
+    featured?: boolean;
 }
 
 export class UpdateCouponDto {
@@ -122,4 +127,9 @@ export class UpdateCouponDto {
     @IsBoolean()
     @ApiPropertyOptional()
     is_active?: boolean;
+
+    @IsOptional()
+    @IsBoolean()
+    @ApiPropertyOptional({ description: "Set this coupon as the featured offer. Only one featured coupon can be active at a time." })
+    featured?: boolean;
 }

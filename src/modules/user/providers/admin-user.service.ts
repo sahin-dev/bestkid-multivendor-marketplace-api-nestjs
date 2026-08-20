@@ -158,7 +158,6 @@ export class AdminUserService {
                 include: {
                     category: true,
                     subCategory: true,
-                    variants: true,
                 },
             }),
             this.prismaService.product.count({ where: { userId: id } }),

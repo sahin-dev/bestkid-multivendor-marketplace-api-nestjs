@@ -53,7 +53,7 @@ export class AccountService {
             this.prismaService.notification.count({ where: { userId, isRead: false } }),
             this.prismaService.cart.findUnique({
                 where: { userId },
-                include: { cartItems: { select: { quantity: true } } },
+                include: { cartItems: { select: { id: true } } },
             }),
         ]);
 
@@ -65,7 +65,7 @@ export class AccountService {
             user,
             counts: {
                 wishlist: wishlistCount,
-                cart: cart?.cartItems.reduce((sum, item) => sum + item.quantity, 0) ?? 0,
+                cart: cart?.cartItems.length ?? 0,
                 notifications: unreadNotificationCount,
             },
         };
@@ -261,7 +261,6 @@ export class AccountService {
                 await tx.recentlyView.deleteMany({ where: { productId: { in: productIds } } });
                 await tx.wishlistItem.deleteMany({ where: { productId: { in: productIds } } });
                 await tx.productReview.deleteMany({ where: { productId: { in: productIds } } });
-                await tx.productVariant.deleteMany({ where: { productId: { in: productIds } } });
                 await tx.product.deleteMany({ where: { id: { in: productIds } } });
             }
 

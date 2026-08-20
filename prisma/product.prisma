@@ -2,6 +2,8 @@ model Product {
   id                  Int           @id @default(autoincrement())
   name                String
   description         String?
+  brand               String?
+  grade               String?
   original_price      Float
   discounted_price    Float?
   discount_percentage Float?
@@ -21,10 +23,11 @@ model Product {
   cart_listed         CartItem[]
   recently_viewed     RecentlyView[]
   is_authenticated    Boolean              @default(false)
-  authentication_status AuthenticationStatus @default(PENDING)
+  authentication_status AuthenticationStatus @default(NOT_SUBMITTED)
   approved_at         DateTime?
   rejected_at         DateTime?
-  variants            ProductVariant[]
+  sold_at             DateTime?
+  authentication_requests ProductAuthenticationRequest[]
   subCategory         SubCategory     @relation(fields: [subCategoryId], references: [id])
   category            Category        @relation(fields: [categoryId], references: [id])
   user                BaseUser        @relation(fields: [userId], references: [id])
@@ -35,17 +38,29 @@ model Product {
   @@map("products")
 }
 
-model ProductVariant {
-  id          Int      @id @default(autoincrement())
-  productId   Int
-  variantName String
-  price       Float
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+model ProductAuthenticationRequest {
+  id              Int       @id @default(autoincrement())
+  productId       Int
+  provider        String    @default("LEGITGRAILS")
+  externalOrderId String?
+  status          String
+  verdict         String?
+  certificateUrl  String?
+  reportUrl       String?
+  image_urls      String[]
+  submittedAt     DateTime?
+  completedAt     DateTime?
+  lastError        String?
+  rawRequest       Json?
+  rawResponse      Json?
+  product          Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  product     Product  @relation(fields: [productId], references: [id])
-  cart_listed CartItem[]
-  order_items OrderItem[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([productId])
+  @@index([externalOrderId])
+  @@map("product_authentication_requests")
 }
 
 model ProductReview {
@@ -76,10 +91,11 @@ enum Condition {
 enum ProductStatus {
   ACTIVE
   INACTIVE
-  OUT_OF_STOCK
+  SOLD
 }
 
 enum AuthenticationStatus {
+  NOT_SUBMITTED
   PENDING
   VERIFIED
   NOT_VERIFIED

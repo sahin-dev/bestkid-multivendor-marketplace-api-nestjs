@@ -30,6 +30,17 @@ export class CheckoutSummaryQueryDto {
     })
     sellerIds?: number[];
 
+    @Transform(({ value }) => toNumberArray(value))
+    @IsArray()
+    @IsInt({ each: true })
+    @IsOptional()
+    @ApiPropertyOptional({
+        type: [Number],
+        description: "Exact cart item IDs to include in checkout. Use this for selected products from cart.",
+        example: [14, 18],
+    })
+    cartItemIds?: number[];
+
     @Type(() => Number)
     @IsInt()
     @IsOptional()
@@ -74,6 +85,17 @@ export class CreateStripeCheckoutSessionDto {
     })
     sellerIds?: number[];
 
+    @Transform(({ value }) => toNumberArray(value))
+    @IsArray()
+    @IsInt({ each: true })
+    @IsOptional()
+    @ApiPropertyOptional({
+        type: [Number],
+        description: "Exact cart item IDs to include in this payment session. Use this for selected products from cart.",
+        example: [14, 18],
+    })
+    cartItemIds?: number[];
+
     @Type(() => Number)
     @IsInt()
     @ApiProperty({ description: "Saved address ID selected on checkout page" })
@@ -83,6 +105,53 @@ export class CreateStripeCheckoutSessionDto {
     @IsOptional()
     @ApiPropertyOptional({ description: "Coupon code to apply to the Stripe checkout total", example: "KIDS20" })
     couponCode?: string;
+
+    @IsBoolean()
+    @ApiProperty({ description: "Buyer must accept Terms & Conditions and Privacy Policy before payment" })
+    acceptedTerms: boolean;
+}
+
+export class BuyNowCheckoutSummaryDto {
+    @Type(() => Number)
+    @IsInt()
+    @ApiProperty({ description: "Product ID selected from the product details page" })
+    productId: number;
+
+    @Type(() => Number)
+    @IsInt()
+    @IsOptional()
+    @ApiPropertyOptional({ description: "Saved address ID selected for direct checkout" })
+    addressId?: number;
+
+    @IsString()
+    @IsOptional()
+    @ApiPropertyOptional({ description: "Shipping address. Required when addressId is not provided." })
+    shippingAddress?: string;
+
+    @IsString()
+    @IsOptional()
+    @ApiPropertyOptional({ description: "City. Required when addressId is not provided." })
+    city?: string;
+
+    @IsString()
+    @IsOptional()
+    @ApiPropertyOptional({ description: "Postal code" })
+    postalCode?: string;
+
+    @IsString()
+    @IsOptional()
+    @ApiPropertyOptional({ description: "Country code (e.g. US, BD). Required when addressId is not provided." })
+    country?: string;
+}
+
+export class CreateBuyNowCheckoutSessionDto extends BuyNowCheckoutSummaryDto {
+    @IsUrl({ require_tld: false })
+    @ApiProperty({ description: "Frontend URL Stripe redirects to after successful payment" })
+    successUrl: string;
+
+    @IsUrl({ require_tld: false })
+    @ApiProperty({ description: "Frontend URL Stripe redirects to when the buyer cancels payment" })
+    cancelUrl: string;
 
     @IsBoolean()
     @ApiProperty({ description: "Buyer must accept Terms & Conditions and Privacy Policy before payment" })

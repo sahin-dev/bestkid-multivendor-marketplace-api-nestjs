@@ -1,18 +1,24 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { CreateProductDto, ProductVariantInputDto } from "./dtos/create-product.dto";
+import { CreateProductDto } from "./dtos/create-product.dto";
 import { UpdateProductDto } from "./dtos/update-product.dto";
-import { CreateVariantDto } from "./dtos/create-variant.dto";
 import { CreateReviewDto } from "./dtos/create-review.dto";
-import { ProductQueryDto, ProductSort } from "./dtos/product-query.dto";
-import { AuthenticationStatus, OrderStatus, ProductStatus } from "generated/prisma/client";
+import { ProductQueryDto, ProductSort, SellerProductStatus } from "./dtos/product-query.dto";
+import { AuthenticationStatus, NotificationType, OrderStatus, ProductStatus, Prisma } from "generated/prisma/client";
 import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { AdminProductApprovalFilter, AdminProductQueryDto } from "./dtos/admin-product-query.dto";
 import { assertEntityExists } from "src/common/validators/entity-exists.validator";
+import { NotificationService } from "../notification/notification.service";
+import { CurrencyConversionService } from "../currency/currency.service";
+import { CurrencyPreference } from "generated/prisma/client";
 
 @Injectable()
 export class ProductService {
-    constructor(private readonly prismaService: PrismaService) { }
+    constructor(
+        private readonly prismaService: PrismaService,
+        private readonly notificationService: NotificationService,
+        private readonly currencyService: CurrencyConversionService,
+    ) { }
 
     private calculateDiscounts(original: number, discounted?: number, percentage?: number) {
         let finalDiscounted = discounted ?? null;
@@ -39,36 +45,36 @@ export class ProductService {
         await this.validateCategoryPair(dto.categoryId, dto.subCategoryId);
 
         const discountData = this.calculateDiscounts(dto.original_price, dto.discounted_price, dto.discount_percentage);
-        const effectivePrice = discountData.discounted_price ?? dto.original_price;
-        const variantInputs = this.normalizeVariantInputs(dto.variants, dto.variant_names, effectivePrice);
-        const { variants, variant_names, ...productData } = dto;
 
         return this.prismaService.product.create({
             data: {
-                ...productData,
+                ...dto,
                 ...discountData,
                 image_urls: dto.image_urls ?? [],
                 userId,
-                ...(variantInputs.length
-                    ? {
-                          variants: {
-                              create: variantInputs,
-                          },
-                      }
-                    : {}),
             },
             include: {
                 category: true,
                 subCategory: true,
-                variants: true,
             },
         });
     }
 
     async findSellerProducts(sellerId: number, query: ProductQueryDto) {
-        const { page = 1, limit = 10, search, status = ProductStatus.ACTIVE, sort = ProductSort.LATEST } = query;
+        const {
+            page = 1,
+            limit = 10,
+            search,
+            sort = ProductSort.LATEST,
+            sellerStatus,
+            authenticationStatus,
+            status = ProductStatus.ACTIVE,
+        } = query;
+
+
         const skip = (page - 1) * limit;
-        const whereClause: any = { userId: sellerId, status };
+        const whereClause: any = { userId: sellerId };
+        let requiresManualFilter = false;
 
         if (search) {
             whereClause.OR = [
@@ -77,20 +83,61 @@ export class ProductService {
             ];
         }
 
-        const [data, total] = await Promise.all([
-            this.prismaService.product.findMany({
-                where: whereClause,
-                skip,
-                take: limit,
-                orderBy: this.getProductOrderBy(sort),
-                include: {
-                    category: true,
-                    subCategory: true,
-                    variants: true,
+        if (sellerStatus) {
+            switch (sellerStatus) {
+                case SellerProductStatus.LIVE:
+                    whereClause.status = ProductStatus.ACTIVE;
+                    whereClause.authentication_status = AuthenticationStatus.VERIFIED;
+                    break;
+                case SellerProductStatus.SOLD:
+                    whereClause.status = ProductStatus.SOLD;
+                    break;
+                case SellerProductStatus.REJECTED:
+                    whereClause.authentication_status = AuthenticationStatus.NOT_VERIFIED;
+                    break;
+                case SellerProductStatus.UNDER_REVIEW:
+                case SellerProductStatus.ACTION_REQUIRED:
+                    whereClause.status = ProductStatus.INACTIVE;
+                    whereClause.authentication_status = AuthenticationStatus.PENDING;
+                    requiresManualFilter = true;
+                    break;
+                case SellerProductStatus.INACTIVE:
+                    whereClause.status = ProductStatus.INACTIVE;
+                    requiresManualFilter = true;
+                    break;
+                default:
+                    whereClause.status = status;
+            }
+        } else {
+            whereClause.status = status;
+        }
+
+        if (authenticationStatus) {
+            whereClause.authentication_status = authenticationStatus;
+            whereClause.status = ProductStatus.INACTIVE
+        }
+        console.log(whereClause)
+        const products = await this.prismaService.product.findMany({
+            where: whereClause,
+            orderBy: this.getProductOrderBy(sort),
+            include: {
+                category: true,
+                subCategory: true,
+                authentication_requests: {
+                    orderBy: [{ createdAt: Prisma.SortOrder.desc }],
+                    take: 1,
                 },
-            }),
-            this.prismaService.product.count({ where: whereClause }),
-        ]);
+            },
+            ...(requiresManualFilter ? {} : { skip, take: limit }),
+        });
+
+        let filteredProducts = products;
+        if (requiresManualFilter) {
+            filteredProducts = products.filter((product) => this.deriveSellerProductStatus(product) === sellerStatus);
+        }
+
+        const total = requiresManualFilter ? filteredProducts.length : await this.prismaService.product.count({ where: whereClause });
+        const data = requiresManualFilter ? filteredProducts.slice(skip, skip + limit) : filteredProducts;
 
         return {
             data: data.map((product) => this.formatSellerProductCard(product)),
@@ -104,11 +151,13 @@ export class ProductService {
     }
 
     async findSellerProductById(productId: number, sellerId: number, isAdmin = false) {
-        const product = await this.getProductForMutation(productId);
-        this.assertCanMutateProduct(product, sellerId, isAdmin);
 
-        const [reviews, ordersCount] = await Promise.all([
-            this.findReviews(productId, { page: 1, limit: 5 }),
+        const product = await this.getProductForMutation(productId);
+    
+        this.assertCanMutateProduct(product, sellerId, isAdmin);
+        try{
+            const [reviews, ordersCount] = await Promise.all([
+            this.findReviews(productId,{ page: 1, limit: 5 },sellerId ),
             this.prismaService.order.count({
                 where: {
                     sellerId: product.userId,
@@ -116,11 +165,11 @@ export class ProductService {
                 },
             }),
         ]);
-
-        return {
+         return {
             ...this.formatSellerProductDetail(product),
             reviews: reviews.data,
             orders_count: ordersCount,
+            latest_request: product.authentication_requests?.[0] ?? null,
             actions: {
                 can_update: true,
                 can_view_orders: true,
@@ -129,6 +178,12 @@ export class ProductService {
                 can_delete: true,
             },
         };
+        }catch(err){
+            console.log(err)
+        }
+        
+
+       
     }
 
     async updateSellerProductStatus(productId: number, sellerId: number, status: ProductStatus, isAdmin = false) {
@@ -136,7 +191,7 @@ export class ProductService {
         this.assertCanMutateProduct(product, sellerId, isAdmin);
 
         if (status === ProductStatus.ACTIVE) {
-            await this.assertCanPublishProduct(product.userId);
+            await this.assertCanPublishProduct(product.userId, product.authentication_status);
         }
 
         const updated = await this.prismaService.product.update({
@@ -149,6 +204,7 @@ export class ProductService {
     }
 
     async findAllProducts(query: ProductQueryDto, userId?: number) {
+        const userCurrency = userId ? await this.getUserCurrency(userId) : CurrencyPreference.USD;
         const {
             page = 1,
             limit = 10,
@@ -162,7 +218,6 @@ export class ProductService {
             sort = ProductSort.LATEST,
             minRating,
             discountedOnly,
-            size,
         } = query;
         const skip = (page - 1) * limit;
 
@@ -204,12 +259,6 @@ export class ProductService {
             whereClause.discounted_price = { not: null };
         }
 
-        if (size) {
-            whereClause.variants = {
-                some: { variantName: { contains: size, mode: "insensitive" } },
-            };
-        }
-
         if (minPrice !== undefined || maxPrice !== undefined) {
             const discountedPrice: any = { not: null };
             const originalPrice: any = {};
@@ -233,6 +282,7 @@ export class ProductService {
         if (andFilters.length > 0) {
             whereClause.AND = andFilters;
         }
+        this.excludeViewerProducts(whereClause, userId);
 
         const orderBy = this.getProductOrderBy(sort);
 
@@ -244,12 +294,15 @@ export class ProductService {
                 include: {
                         category: true,
                         subCategory: true,
-                        variants: true,
                         user: {
                             select: {
                                 id: true,
                                 profile: { select: { full_name: true, avatar_url: true, country: true } },
                             },
+                        },
+                        authentication_requests: {
+                            orderBy: [{ createdAt: Prisma.SortOrder.desc }],
+                            take: 1,
                         },
                     },
                 orderBy,
@@ -259,9 +312,17 @@ export class ProductService {
 
         const pages = Math.ceil(total / limit);
         const wishlistedIds = await this.getWishlistedProductIds(userId, data.map((product) => product.id));
+        const items = this.withWishlistState(data, wishlistedIds);
+
+        const convertedItems = await Promise.all(
+            items.map(async (product) => {
+                const merged = this.mergeProductImageUrls(product);
+                return this.applyUserCurrency(merged, userCurrency);
+            }),
+        );
 
         return {
-            data: this.withWishlistState(data, wishlistedIds),
+            data: convertedItems,
             meta: {
                 total,
                 page,
@@ -271,23 +332,18 @@ export class ProductService {
         };
     }
 
-    async findProductById(id: number, userId?: number) {
+    async findProductById(id: number, userId?: number, isAdmin = false) {
+
+        const userCurrency = userId ? await this.getUserCurrency(userId) : CurrencyPreference.USD;
+       
         const product = await this.prismaService.product.findUnique({
             where: { id },
             include: {
                 user: {
-                    select: {
-                        id: true,
-                        email: true,
-                        seller_tier: true,
-                        stripe_onboarding_complete: true,
-                        profile: { select: { full_name: true, avatar_url: true, country: true } },
-                        delivery_option: true,
-                    },
+                    
                 },
                 category: true,
                 subCategory: true,
-                variants: true,
                 reviews: {
                     orderBy: { createdAt: "desc" },
                     take: 5,
@@ -300,10 +356,22 @@ export class ProductService {
                         },
                     },
                 },
+                authentication_requests: {
+                    orderBy: [{ createdAt: Prisma.SortOrder.desc }],
+                    take: 1,
+                },
             },
         });
 
+        
+       
         if (!product) {
+           
+            throw new NotFoundException(`Product with ID ${id} not found`);
+        }
+
+        const isOwner = userId !== undefined && product.userId === userId;
+        if (product.status !== ProductStatus.ACTIVE && !isOwner && !isAdmin) {
             throw new NotFoundException(`Product with ID ${id} not found`);
         }
 
@@ -327,12 +395,16 @@ export class ProductService {
             this.findRelatedProducts(id, product.categoryId, userId),
         ]);
 
+        const convertedProduct = await this.applyUserCurrency(this.mergeProductImageUrls(product), userCurrency);
+        const convertedRelatedProducts = await Promise.all(
+            relatedProducts.map(async (item) => this.applyUserCurrency(this.mergeProductImageUrls(item), userCurrency)),
+        );
+
         return {
-            ...product,
-            effective_price: product.discounted_price ?? product.original_price,
+            ...convertedProduct,
             is_wishlisted: isWishlisted,
             seller_overview: sellerStats,
-            related_products: relatedProducts,
+            related_products: convertedRelatedProducts,
         };
     }
 
@@ -350,7 +422,7 @@ export class ProductService {
         }
 
         if (dto.status === ProductStatus.ACTIVE) {
-            await this.assertCanPublishProduct(existingProduct.userId);
+            await this.assertCanPublishProduct(existingProduct.userId, existingProduct.authentication_status);
         }
 
         let discountData = {};
@@ -366,41 +438,13 @@ export class ProductService {
             discountData = this.calculateDiscounts(orig, disc, perc);
         }
 
-        const finalPrice =
-            (discountData as { discounted_price?: number | null }).discounted_price ??
-            dto.discounted_price ??
-            existingProduct.discounted_price ??
-            dto.original_price ??
-            existingProduct.original_price;
-        const variantInputs = this.normalizeVariantInputs(dto.variants, dto.variant_names, finalPrice);
-        const { variants, variant_names, replace_variants, ...productData } = dto;
-
-        return this.prismaService.$transaction(async (tx) => {
-            if (variantInputs.length > 0) {
-                const shouldReplace = replace_variants !== false;
-                if (shouldReplace) {
-                    await tx.productVariant.deleteMany({
-                        where: {
-                            productId: id,
-                            order_items: { none: {} },
-                            cart_listed: { none: {} },
-                        },
-                    });
-                }
-
-                await tx.productVariant.createMany({
-                    data: variantInputs.map((variant) => ({ ...variant, productId: id })),
-                });
-            }
-
-            return tx.product.update({
-                where: { id },
-                data: {
-                    ...productData,
-                    ...discountData,
-                },
-                include: this.getSellerProductInclude(),
-            });
+        return this.prismaService.product.update({
+            where: { id },
+            data: {
+                ...dto,
+                ...discountData,
+            },
+            include: this.getSellerProductInclude(),
         });
     }
 
@@ -415,11 +459,6 @@ export class ProductService {
             throw new BadRequestException("Product cannot be deleted after it has been ordered. Mark it inactive instead.");
         }
 
-        // Delete variants and reviews first to prevent constraint violations
-        await this.prismaService.productVariant.deleteMany({
-            where: { productId: id },
-        });
-
         await this.prismaService.productReview.deleteMany({
             where: { productId: id },
         });
@@ -427,42 +466,6 @@ export class ProductService {
         return this.prismaService.product.delete({
             where: { id },
         });
-    }
-
-    async createVariant(productId: number, dto: CreateVariantDto, actorId?: number, isAdmin = false) {
-        const product = await this.getProductForMutation(productId);
-        if (actorId !== undefined) {
-            this.assertCanMutateProduct(product, actorId, isAdmin);
-        }
-
-        return this.prismaService.productVariant.create({
-            data: {
-                ...dto,
-                productId,
-            },
-        });
-    }
-
-    async deleteVariant(productId: number, variantId: number, actorId?: number, isAdmin = false) {
-        const product = await this.getProductForMutation(productId);
-        if (actorId !== undefined) {
-            this.assertCanMutateProduct(product, actorId, isAdmin);
-        }
-
-        const variant = await this.prismaService.productVariant.findFirst({
-            where: { id: variantId, productId },
-        });
-
-        if (!variant) {
-            throw new NotFoundException(`Variant with ID ${variantId} not found under Product ${productId}`);
-        }
-
-        const orderItemCount = await this.prismaService.orderItem.count({ where: { variantId } });
-        if (orderItemCount > 0) {
-            throw new BadRequestException("Variant cannot be deleted after it has been ordered.");
-        }
-
-        return this.prismaService.productVariant.delete({ where: { id: variantId } });
     }
 
     async createReview(productId: number, userId: number, dto: CreateReviewDto) {
@@ -513,8 +516,8 @@ export class ProductService {
         return newReview;
     }
 
-    async findReviews(productId: number, query: PaginationDto = { page: 1, limit: 10 }) {
-        await this.findProductById(productId);
+    async findReviews(productId: number, query: PaginationDto = { page: 1, limit: 10 },sellerId?:number) {
+        await this.findProductById(productId, sellerId);
 
         const { page = 1, limit = 10 } = query ?? {};
         const skip = (page - 1) * limit;
@@ -594,13 +597,21 @@ export class ProductService {
         }
 
         if (approval && approval !== AdminProductApprovalFilter.ALL) {
-            const approvalMap: Record<Exclude<AdminProductApprovalFilter, AdminProductApprovalFilter.ALL>, AuthenticationStatus> = {
-                [AdminProductApprovalFilter.APPROVED]: AuthenticationStatus.VERIFIED,
-                [AdminProductApprovalFilter.REJECTED]: AuthenticationStatus.NOT_VERIFIED,
-                [AdminProductApprovalFilter.PENDING]: AuthenticationStatus.PENDING,
-            };
+            if (approval === AdminProductApprovalFilter.PENDING) {
+                whereClause.authentication_status = {
+                    in: [AuthenticationStatus.NOT_SUBMITTED, AuthenticationStatus.PENDING],
+                };
+            } else {
+                const approvalMap: Record<
+                    Exclude<AdminProductApprovalFilter, AdminProductApprovalFilter.ALL | AdminProductApprovalFilter.PENDING>,
+                    AuthenticationStatus
+                > = {
+                    [AdminProductApprovalFilter.APPROVED]: AuthenticationStatus.VERIFIED,
+                    [AdminProductApprovalFilter.REJECTED]: AuthenticationStatus.NOT_VERIFIED,
+                };
 
-            whereClause.authentication_status = approvalMap[approval];
+                whereClause.authentication_status = approvalMap[approval];
+            }
         }
 
         const [data, total] = await Promise.all([
@@ -644,7 +655,7 @@ export class ProductService {
         const isAuthenticated = status === AuthenticationStatus.VERIFIED;
         const now = new Date();
 
-        return this.prismaService.product.update({
+        const updatedProduct = await this.prismaService.product.update({
             where: { id },
             data: {
                 authentication_status: status,
@@ -652,13 +663,13 @@ export class ProductService {
                 approved_at:
                     status === AuthenticationStatus.VERIFIED
                         ? now
-                        : status === AuthenticationStatus.PENDING
+                        : status === AuthenticationStatus.PENDING || status === AuthenticationStatus.NOT_SUBMITTED
                           ? null
                           : product.approved_at,
                 rejected_at:
                     status === AuthenticationStatus.NOT_VERIFIED
                         ? now
-                        : status === AuthenticationStatus.PENDING
+                        : status === AuthenticationStatus.PENDING || status === AuthenticationStatus.NOT_SUBMITTED
                           ? null
                           : product.rejected_at,
             },
@@ -674,6 +685,28 @@ export class ProductService {
                 },
             },
         });
+
+        try {
+            const statusMessage =
+                status === AuthenticationStatus.VERIFIED
+                    ? "verified"
+                    : status === AuthenticationStatus.NOT_VERIFIED
+                      ? "not verified"
+                      : status === AuthenticationStatus.PENDING
+                        ? "pending review"
+                        : "not submitted";
+
+            await this.notificationService.create(
+                updatedProduct.user.id,
+                "Product authentication update",
+                `Your product "${updatedProduct.name}" is now ${statusMessage}.`,
+                NotificationType.AUTHENTICATION,
+            );
+        } catch (error) {
+            console.error("Failed to send product authentication notification", error);
+        }
+
+        return updatedProduct;
     }
 
     private getProductOrderBy(sort: ProductSort) {
@@ -690,6 +723,31 @@ export class ProductService {
             default:
                 return [{ createdAt: "desc" as const }];
         }
+    }
+
+    private async getUserCurrency(userId: number): Promise<CurrencyPreference> {
+        const user = await this.prismaService.baseUser.findUnique({
+            where: { id: userId },
+            select: { currency_preference: true },
+        });
+
+        return user?.currency_preference ?? CurrencyPreference.USD;
+    }
+
+    private async applyUserCurrency<T extends { original_price: number; discounted_price?: number | null; effective_price?: number; }>(
+        product: T,
+        currency: CurrencyPreference,
+    ) {
+        const baseCurrency = CurrencyPreference.USD;
+        const originalPrice = await this.currencyService.convertPrice(product.original_price, baseCurrency, currency);
+        const discountedPrice = await this.currencyService.convertPrice(product.discounted_price ?? null, baseCurrency, currency);
+
+        return {
+            ...product,
+            original_price: originalPrice ?? 0,
+            discounted_price: discountedPrice,
+            effective_price: discountedPrice ?? originalPrice ?? 0,
+        };
     }
 
     private async getWishlistedProductIds(userId: number | undefined, productIds: number[]) {
@@ -727,6 +785,17 @@ export class ProductService {
         });
 
         return Boolean(item);
+    }
+
+    private mergeProductImageUrls(product: any) {
+        const productImages = Array.isArray(product?.image_urls) ? product.image_urls : [];
+        const authImages = Array.isArray(product?.authentication_requests?.[0]?.image_urls)
+            ? product.authentication_requests[0].image_urls
+            : [];
+
+        const merged = [...productImages, ...authImages].filter((value, index, array) => value && array.indexOf(value) === index);
+
+        return { ...product, image_urls: merged, image_url: merged[0] ?? null };
     }
 
     private async getSellerStats(sellerId: number) {
@@ -768,18 +837,64 @@ export class ProductService {
                 id: { not: productId },
                 categoryId,
                 status: "ACTIVE",
+                ...(userId ? { userId: { not: userId } } : {}),
             },
             take: 4,
             orderBy: [{ average_rating: "desc" }, { createdAt: "desc" }],
             include: {
                 category: true,
                 subCategory: true,
-                variants: true,
             },
         });
 
         const wishlistedIds = await this.getWishlistedProductIds(userId, products.map((product) => product.id));
         return this.withWishlistState(products, wishlistedIds);
+    }
+
+    private deriveSellerProductStatus(product: any) {
+        const latestRequest = product.authentication_requests?.[0];
+
+        if (product.status === ProductStatus.SOLD) {
+            return SellerProductStatus.SOLD;
+        }
+
+        if (product.status === ProductStatus.ACTIVE && product.authentication_status === AuthenticationStatus.VERIFIED) {
+            return SellerProductStatus.LIVE;
+        }
+
+        if (product.authentication_status === AuthenticationStatus.NOT_VERIFIED) {
+            return SellerProductStatus.REJECTED;
+        }
+
+        if (product.authentication_status === AuthenticationStatus.PENDING) {
+            const requestStatus = latestRequest?.status?.toLowerCase();
+            if (requestStatus === "update-needed" || requestStatus === "photo-update-needed") {
+                return SellerProductStatus.ACTION_REQUIRED;
+            }
+
+            // If a pending request is still open, the product is under review.
+            return SellerProductStatus.UNDER_REVIEW;
+        }
+
+        if (product.status === ProductStatus.INACTIVE) {
+            return SellerProductStatus.INACTIVE;
+        }
+
+        return SellerProductStatus.INACTIVE;
+    }
+
+    private excludeViewerProducts(whereClause: any, userId?: number) {
+        if (!userId) {
+            return;
+        }
+
+        const existingAnd = Array.isArray(whereClause.AND)
+            ? whereClause.AND
+            : whereClause.AND
+              ? [whereClause.AND]
+              : [];
+
+        whereClause.AND = [...existingAnd, { userId: { not: userId } }];
     }
 
     private assertReviewTextWithinWordLimit(review?: string) {
@@ -818,16 +933,25 @@ export class ProductService {
             });
         }
 
-        if ((requestedStatus ?? ProductStatus.INACTIVE) === ProductStatus.ACTIVE && !readiness.delivery_configured) {
+        if ((requestedStatus ?? ProductStatus.INACTIVE) === ProductStatus.ACTIVE) {
+            if (!readiness.delivery_configured) {
+                throw new ForbiddenException({
+                    code: "DELIVERY_INFORMATION_MISSING",
+                    message: "Complete delivery settings before making products available for purchase.",
+                    readiness,
+                });
+            }
+
+            // A brand-new product can never already be VERIFIED — it must be created first,
+            // then submitted to LegitGrails, then flipped to ACTIVE once authenticated.
             throw new ForbiddenException({
-                code: "DELIVERY_INFORMATION_MISSING",
-                message: "Complete delivery settings before making products available for purchase.",
-                readiness,
+                code: "AUTHENTICATION_REQUIRED",
+                message: "New listings must be submitted for LegitGrails authentication before they can go live. Create it as INACTIVE, then activate it once verified.",
             });
         }
     }
 
-    private async assertCanPublishProduct(sellerId: number) {
+    private async assertCanPublishProduct(sellerId: number, authenticationStatus: AuthenticationStatus) {
         const readiness = await this.getSellerProductReadiness(sellerId);
         if (!readiness.stripe_connected) {
             throw new ForbiddenException({
@@ -841,6 +965,12 @@ export class ProductService {
                 code: "DELIVERY_INFORMATION_MISSING",
                 message: "Complete delivery settings before publishing products.",
                 readiness,
+            });
+        }
+        if (authenticationStatus !== AuthenticationStatus.VERIFIED) {
+            throw new ForbiddenException({
+                code: "AUTHENTICATION_REQUIRED",
+                message: "This item must be verified by LegitGrails before it can be listed for sale.",
             });
         }
     }
@@ -900,6 +1030,7 @@ export class ProductService {
             where: { id },
             include: this.getSellerProductInclude(),
         });
+        
         if (!product) {
             throw new NotFoundException(`Product with ID ${id} not found`);
         }
@@ -910,7 +1041,6 @@ export class ProductService {
         return {
             category: true,
             subCategory: true,
-            variants: true,
             user: {
                 select: {
                     id: true,
@@ -919,6 +1049,10 @@ export class ProductService {
                     stripe_onboarding_complete: true,
                     profile: { select: { full_name: true, avatar_url: true, country: true } },
                 },
+            },
+            authentication_requests: {
+                orderBy: [{ createdAt: Prisma.SortOrder.desc }],
+                take: 1,
             },
         };
     }
@@ -929,53 +1063,23 @@ export class ProductService {
         }
     }
 
-    private normalizeVariantInputs(
-        variants: ProductVariantInputDto[] | undefined,
-        variantNames: string[] | undefined,
-        fallbackPrice: number,
-    ) {
-        const inputs: ProductVariantInputDto[] = [
-            ...(variants ?? []),
-            ...(variantNames ?? []).map((variantName) => ({ variantName })),
-        ];
-        const seen = new Set<string>();
-        const normalized: { variantName: string; price: number }[] = [];
-
-        for (const input of inputs) {
-            const variantName = input.variantName?.trim();
-            if (!variantName) {
-                continue;
-            }
-            const key = variantName.toLowerCase();
-            if (seen.has(key)) {
-                continue;
-            }
-            seen.add(key);
-            normalized.push({
-                variantName,
-                price: input.price ?? fallbackPrice,
-            });
-        }
-
-        return normalized;
-    }
-
     private formatSellerProductCard(product: any) {
         return {
             id: product.id,
             name: product.name,
             status: product.status,
+            seller_status: this.deriveSellerProductStatus(product),
             category: product.category,
             subCategory: product.subCategory,
             image_urls: product.image_urls,
             image_url: product.image_urls?.[0] ?? null,
+            grade: product.grade,
             original_price: product.original_price,
             discounted_price: product.discounted_price,
             effective_price: product.discounted_price ?? product.original_price,
             discount_percentage: product.discount_percentage,
             average_rating: product.average_rating ?? 0,
             total_reviews: product.total_reviews,
-            variants: product.variants,
             createdAt: product.createdAt,
             updatedAt: product.updatedAt,
             actions: {
@@ -993,11 +1097,14 @@ export class ProductService {
             ...this.formatSellerProductCard(product),
             description: product.description,
             condition: product.condition,
+            brand: product.brand,
             is_authenticated: product.is_authenticated,
             authentication_status: product.authentication_status,
             approved_at: product.approved_at,
             rejected_at: product.rejected_at,
+            sold_at: product.sold_at,
             seller: product.user,
+            latest_request: product.authentication_requests?.[0] ?? null,
         };
     }
 }

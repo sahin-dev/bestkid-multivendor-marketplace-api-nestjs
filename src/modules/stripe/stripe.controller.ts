@@ -15,7 +15,7 @@ import { ApiBearerAuth, ApiBody, ApiOperation, ApiQuery, ApiTags } from "@nestjs
 import { GetUser, Public, Roles } from "src/common/decorators";
 import { StripeService } from "./stripe.service";
 import { OnboardSellerDto } from "./dtos/onboard-seller.dto";
-import { CreateStripeCheckoutSessionDto } from "../order/dtos/checkout-flow.dto";
+import { CreateBuyNowCheckoutSessionDto, CreateStripeCheckoutSessionDto } from "../order/dtos/checkout-flow.dto";
 import type { Request } from "express";
 
 @ApiTags("Stripe")
@@ -36,6 +36,13 @@ export class StripeController {
     @ApiBody({ type: CreateStripeCheckoutSessionDto })
     async createCheckoutSession(@GetUser("id") userId: number, @Body() dto: CreateStripeCheckoutSessionDto) {
         return this.stripeService.createCheckoutSession(userId, dto);
+    }
+
+    @Post("buy-now-session")
+    @ApiOperation({ summary: "Create direct Buy Now Stripe checkout session", description: "Creates a hosted Stripe Checkout payment session for one product from the product details page without adding it to cart." })
+    @ApiBody({ type: CreateBuyNowCheckoutSessionDto })
+    async createBuyNowCheckoutSession(@GetUser("id") userId: number, @Body() dto: CreateBuyNowCheckoutSessionDto) {
+        return this.stripeService.createBuyNowCheckoutSession(userId, dto);
     }
 
     @Get("status")

@@ -1,18 +1,14 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { Type } from "class-transformer";
 import {
     IsArray,
-    IsBoolean,
     IsEnum,
     IsInt,
     IsNumber,
     IsOptional,
     IsPositive,
     IsString,
-    ValidateNested,
 } from "class-validator";
 import { Condition, ProductStatus } from "generated/prisma/client";
-import { ProductVariantInputDto } from "./create-product.dto";
 
 export class UpdateProductDto {
     @IsString()
@@ -28,6 +24,11 @@ export class UpdateProductDto {
         description: "Product description",
     })
     description?: string;
+
+    @IsString()
+    @IsOptional()
+    @ApiProperty({ required: false, example: "Grade 3", description: "Target school grade for the product" })
+    grade?: string;
 
     @IsNumber()
     @IsPositive()
@@ -81,32 +82,4 @@ export class UpdateProductDto {
         description: "Product status",
     })
     status?: ProductStatus;
-
-    @IsArray()
-    @ValidateNested({ each: true })
-    @Type(() => ProductVariantInputDto)
-    @IsOptional()
-    @ApiProperty({
-        required: false,
-        type: [ProductVariantInputDto],
-        example: [{ variantName: "M", price: 18 }],
-        description: "Variants to replace or add",
-    })
-    variants?: ProductVariantInputDto[];
-
-    @IsArray()
-    @IsString({ each: true })
-    @IsOptional()
-    @ApiProperty({ required: false, type: [String], example: ["S", "M", "L"], description: "Shorthand variant names" })
-    variant_names?: string[];
-
-    @IsBoolean()
-    @IsOptional()
-    @ApiProperty({
-        required: false,
-        default: true,
-        example: true,
-        description: "When variants are submitted, replace existing variants by default",
-    })
-    replace_variants?: boolean;
 }

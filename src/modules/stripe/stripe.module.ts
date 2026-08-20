@@ -5,9 +5,10 @@ import { PrismaModule } from "../prisma/prisma.module";
 import { ConfigModule } from "@nestjs/config";
 import stripeConfig from "src/config/stripe.config";
 import { OrderModule } from "../order/order.module";
+import { PaymentModule } from "../payment/payment.module";
 
 @Module({
-    imports: [PrismaModule, ConfigModule.forFeature(stripeConfig), OrderModule],
+    imports: [PrismaModule, ConfigModule.forFeature(stripeConfig), OrderModule, PaymentModule],
     providers: [StripeService],
     controllers: [StripeController],
     exports: [StripeService],

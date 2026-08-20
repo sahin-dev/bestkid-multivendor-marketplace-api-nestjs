@@ -10,7 +10,7 @@ import { GlobalHttpExceptionHandler } from './common/exceptions/GlobalHttpExcept
 import { applySwaggerResponseExamples } from './common/swagger/response-examples';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
 
   const configuredOrigins = process.env.CORS_ORIGINS
     ?.split(",")
@@ -56,7 +56,7 @@ async function bootstrap() {
     .addTag('Admin Dashboard', 'Admin dashboard cards, activity, and platform earnings')
     .addTag('Admin Coupons', 'Admin coupon management')
     .addTag('User Management', 'Admin user listing, blocking, and seller tier management')
-    .addTag('Products', 'Product listing, moderation, variants, and reviews')
+    .addTag('Products', 'Product listing, moderation, and reviews. Each product is a single, unique, authenticated item.')
     .addTag('Categories', 'Product category and sub-category management')
     .addTag('Orders', 'Buyer cart checkout, coupon preview, seller orders, and admin order workflows')
     .addTag('Returns', 'Return request workflows')
@@ -70,6 +70,7 @@ async function bootstrap() {
     .addTag('Notifications', 'Notification list and read state')
     .addTag('Chat', 'Chat rooms and messages')
     .addTag('Stripe', 'Stripe buyer checkout sessions, seller onboarding, and admin connected accounts')
+    .addTag('LegitGrails', 'Product authentication submissions and webhook results')
     .addTag('Uploads', 'File upload and deletion')
     .addBearerAuth(
       {

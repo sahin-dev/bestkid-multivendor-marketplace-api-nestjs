@@ -4,7 +4,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import stripeConfig, { StripeConfig } from "src/config/stripe.config";
 import Stripe from "stripe";
 import { OrderService } from "../order/order.service";
-import { CreateStripeCheckoutSessionDto } from "../order/dtos/checkout-flow.dto";
+import { PaymentService } from "../payment/payment.service";
+import { CreateBuyNowCheckoutSessionDto, CreateStripeCheckoutSessionDto } from "../order/dtos/checkout-flow.dto";
 
 @Injectable()
 export class StripeService {
@@ -14,6 +15,7 @@ export class StripeService {
     constructor(
         private readonly prismaService: PrismaService,
         private readonly orderService: OrderService,
+        private readonly paymentService: PaymentService,
         @Inject(stripeConfig.KEY) private readonly stripeConfiguration: ConfigType<typeof StripeConfig>,
     ) {
         const stripeKey = this.stripeConfiguration.stripe_key?.trim();
@@ -112,6 +114,7 @@ export class StripeService {
 
         const checkoutSummary = await this.orderService.getCheckoutSummary(userId, {
             sellerIds: dto.sellerIds,
+            cartItemIds: dto.cartItemIds,
             addressId: dto.addressId,
             couponCode: dto.couponCode,
         });
@@ -122,6 +125,18 @@ export class StripeService {
             throw new BadRequestException("Checkout total must be greater than zero.");
         }
 
+        // Step 1: Create pending orders (before Stripe session)
+        const orderResult = await this.orderService.createPendingCartOrders(userId, {
+            sellerIds: dto.sellerIds,
+            cartItemIds: dto.cartItemIds,
+            addressId: dto.addressId,
+            couponCode: dto.couponCode,
+            acceptedTerms: true,
+        });
+
+        const orderIds = orderResult.orders.map((o) => o.id).join(",");
+
+        // Step 2: Create Stripe checkout session with orderId in metadata
         const session = await this.stripe.checkout.sessions.create({
             mode: "payment",
             payment_method_types: ["card"],
@@ -143,11 +158,26 @@ export class StripeService {
                 },
             ],
             metadata: {
+                checkoutMode: "cart",
                 userId: String(userId),
+                orderIds: orderIds,
                 addressId: String(dto.addressId),
-                sellerIds: dto.sellerIds?.join(",") ?? "",
-                couponCode: dto.couponCode ?? "",
+                cartId: String(orderResult.cart_id),
+                couponId: orderResult.coupon_id ? String(orderResult.coupon_id) : "",
                 total: String(amountTotal),
+            },
+        });
+
+        // Step 3: Create pending payment transaction
+        await this.paymentService.createPendingTransaction({
+            userId,
+            amount: amountTotal,
+            currency: "eur",
+            stripeSessionId: session.id,
+            metadata: {
+                checkoutMode: "cart",
+                orderIds: orderIds,
+                cartId: String(orderResult.cart_id),
             },
         });
 
@@ -157,6 +187,103 @@ export class StripeService {
             currency: "eur",
             amount_total: amountTotal,
             checkout_summary: checkoutSummary,
+            pending_orders: orderResult.orders,
+        };
+    }
+
+    async createBuyNowCheckoutSession(userId: number, dto: CreateBuyNowCheckoutSessionDto) {
+        if (!dto.acceptedTerms) {
+            throw new BadRequestException("You must agree to the Terms & Conditions and Privacy Policy before payment.");
+        }
+        if (!dto.addressId && (!dto.shippingAddress || !dto.city || !dto.country)) {
+            throw new BadRequestException("Select a shipping address before payment.");
+        }
+
+        const user = await this.prismaService.baseUser.findUnique({
+            where: { id: userId },
+            select: { email: true },
+        });
+        if (!user) {
+            throw new NotFoundException(`User with ID ${userId} not found`);
+        }
+
+        const checkoutSummary = await this.orderService.getBuyNowCheckoutSummary(userId, dto);
+        const amountTotal = checkoutSummary.price_details.total;
+        if (amountTotal === null) {
+            throw new BadRequestException("Select a shipping address before payment.");
+        }
+        const amountInCents = Math.round(amountTotal * 100);
+        const item = checkoutSummary.seller_groups[0].items[0];
+
+        if (amountInCents <= 0) {
+            throw new BadRequestException("Checkout total must be greater than zero.");
+        }
+
+        // Step 1: Create pending buy-now order (before Stripe session)
+        const orderResult = await this.orderService.createPendingBuyNowOrder(userId, {
+            productId: dto.productId,
+            addressId: dto.addressId,
+            shippingAddress: dto.shippingAddress,
+            city: dto.city,
+            postalCode: dto.postalCode,
+            country: dto.country,
+            acceptedTerms: true,
+        });
+
+        const orderId = orderResult.order.id;
+
+        // Step 2: Create Stripe checkout session with orderId in metadata
+        const session = await this.stripe.checkout.sessions.create({
+            mode: "payment",
+            payment_method_types: ["card"],
+            success_url: dto.successUrl,
+            cancel_url: dto.cancelUrl,
+            customer_email: user.email,
+            client_reference_id: String(userId),
+            line_items: [
+                {
+                    price_data: {
+                        currency: "eur",
+                        product_data: {
+                            name: item.product.name,
+                            description: "Buy Now checkout",
+                            images: item.product.image_url ? [item.product.image_url] : undefined,
+                        },
+                        unit_amount: amountInCents,
+                    },
+                    quantity: 1,
+                },
+            ],
+            metadata: {
+                checkoutMode: "buy_now",
+                userId: String(userId),
+                orderId: String(orderId),
+                productId: String(dto.productId),
+                total: String(amountTotal),
+            },
+        });
+
+        // Step 3: Create pending payment transaction
+        await this.paymentService.createPendingTransaction({
+            userId,
+            orderId,
+            amount: amountTotal,
+            currency: "eur",
+            stripeSessionId: session.id,
+            metadata: {
+                checkoutMode: "buy_now",
+                orderId: String(orderId),
+                productId: String(dto.productId),
+            },
+        });
+
+        return {
+            session_id: session.id,
+            url: session.url,
+            currency: "eur",
+            amount_total: amountTotal,
+            checkout_summary: checkoutSummary,
+            pending_order: orderResult.order,
         };
     }
 
@@ -215,7 +342,7 @@ export class StripeService {
                 signature,
                 this.stripeConfiguration.webhook_key!,
             );
-        } catch (err) {
+        } catch (err:any) {
             throw new BadRequestException(`Webhook signature verification failed: ${err.message}`);
         }
 
@@ -231,44 +358,115 @@ export class StripeService {
         }
 
         if (event.type === "checkout.session.completed") {
-            await this.handleCheckoutSessionCompleted(event.data.object as Stripe.Checkout.Session);
+            const session = event.data.object as Stripe.Checkout.Session;
+            await this.paymentService.markSucceeded(session.id, session.payment_intent?.toString(), session.customer?.toString());
+            await this.handleCheckoutSessionCompleted(session);
         }
 
         return { received: true };
     }
 
     private async handleCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
-        const userId = Number(session.metadata?.userId);
-        const addressId = Number(session.metadata?.addressId);
-        const sellerIds = session.metadata?.sellerIds
-            ? session.metadata.sellerIds
-                  .split(",")
-                  .map((sellerId) => Number(sellerId.trim()))
-                  .filter((sellerId) => Number.isInteger(sellerId) && sellerId > 0)
-            : undefined;
-        const couponCode = session.metadata?.couponCode || undefined;
+        if (session.payment_status !== "paid") {
+            this.logger.warn(`Skipping checkout.session.completed ${session.id}: payment_status is ${session.payment_status ?? "unknown"}.`);
+            return;
+        }
 
-        if (!userId || !addressId) {
-            this.logger.warn(`Skipping checkout.session.completed ${session.id}: missing userId or addressId metadata.`);
+        if (session.metadata?.checkoutMode === "buy_now") {
+            await this.handleBuyNowCheckoutSessionCompleted(session);
+            return;
+        }
+
+        const orderIds = session.metadata?.orderIds
+            ? session.metadata.orderIds
+                  .split(",")
+                  .map((id) => Number(id.trim()))
+                  .filter((id) => Number.isInteger(id) && id > 0)
+            : [];
+        const cartId = Number(session.metadata?.cartId);
+
+        if (orderIds.length === 0) {
+            this.logger.warn(`Skipping checkout.session.completed ${session.id}: missing orderIds metadata.`);
             return;
         }
 
         try {
-            await this.orderService.checkoutFromCart(userId, {
-                sellerIds,
-                addressId,
-                couponCode,
-                acceptedTerms: true,
-            });
-            this.logger.log(`Created orders for paid checkout session ${session.id}.`);
-        } catch (err) {
-            if (err?.message === "Cart is empty") {
-                this.logger.warn(`Checkout session ${session.id} was already processed or cart is empty.`);
-                return;
+            // Step 1: Confirm each order (PENDING -> CONFIRMED)
+            // For cart orders, don't set stripe_checkout_session_id (unique constraint allows only one order per session)
+            for (const orderId of orderIds) {
+                await this.orderService.confirmOrder(orderId, undefined, false);
             }
-            this.logger.error(`Failed to create orders for checkout session ${session.id}`, err?.stack ?? err);
+
+            // Step 2: Link payment transaction to orders
+            await this.paymentService.linkOrderToSession(session.id, orderIds[0]);
+
+            // Step 3: Delete cart items for this cart
+            if (cartId) {
+                await this.prismaService.cartItem.deleteMany({
+                    where: { cartId },
+                });
+            }
+
+            // Step 4: Mark products as sold
+            for (const orderId of orderIds) {
+                await this.orderService.markProductsSoldForOrder(orderId);
+            }
+
+            this.logger.log(`Confirmed ${orderIds.length} orders for paid checkout session ${session.id}.`);
+        } catch (err: any) {
+            this.logger.error(`Failed to process checkout session ${session.id}`, err?.stack ?? err);
             throw err;
         }
+    }
+
+    private async handleBuyNowCheckoutSessionCompleted(session: Stripe.Checkout.Session) {
+        if (session.payment_status !== "paid") {
+            this.logger.warn(`Skipping buy_now checkout.session.completed ${session.id}: payment_status is ${session.payment_status ?? "unknown"}.`);
+            return;
+        }
+
+        const orderId = Number(session.metadata?.orderId);
+
+        if (!orderId) {
+            this.logger.warn(`Skipping buy_now checkout.session.completed ${session.id}: missing orderId metadata.`);
+            return;
+        }
+
+        try {
+            // Step 1: Confirm order (PENDING -> CONFIRMED) with session ID (buy-now has 1:1 mapping)
+            await this.orderService.confirmOrder(orderId, session.id, true);
+
+            // Step 2: Link payment transaction to order
+            await this.paymentService.linkOrderToSession(session.id, orderId);
+
+            // Step 3: Mark product as sold
+            await this.orderService.markProductsSoldForOrder(orderId);
+
+            this.logger.log(`Confirmed Buy Now order ${orderId} for paid checkout session ${session.id}.`);
+        } catch (err: any) {
+            this.logger.error(`Failed to process buy-now checkout session ${session.id}`, err?.stack ?? err);
+            throw err;
+        }
+    }
+
+    private numberFromMetadata(value?: string | null) {
+        if (!value) {
+            return undefined;
+        }
+        const numberValue = Number(value);
+        return Number.isInteger(numberValue) && numberValue > 0 ? numberValue : undefined;
+    }
+
+    private numberArrayFromMetadata(value?: string | null) {
+        const ids = value
+            ?.split(",")
+            .map((item) => Number(item.trim()))
+            .filter((item) => Number.isInteger(item) && item > 0);
+        return ids?.length ? ids : undefined;
+    }
+
+    private stringFromMetadata(value?: string | null) {
+        return value?.trim() || undefined;
     }
 
     /**

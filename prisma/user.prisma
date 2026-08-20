@@ -7,6 +7,7 @@ model BaseUser {
   profile_id     Int?      @unique
   profile        Profile?  @relation(fields: [profile_id], references: [id])
   role           UserRole @default(USER)
+  fcmToken       String?  @map("fcm_token")
 
   // Stripe seller onboarding
   stripe_account_id          String?
@@ -22,10 +23,13 @@ model BaseUser {
   seller_chat     ChatRoom[] @relation("SellerChatRoom")
   cart            Cart?
   notifications   Notification[]
+  device_tokens   UserDeviceToken[]
+  push_logs       PushNotificationLog[]
   messages        ChatMessage[]
   recently_viewed RecentlyView[]
   buyer_orders    Order[]    @relation("BuyerOrders")
   seller_orders   Order[]    @relation("SellerOrders")
+  payment_transactions PaymentTransaction[]
   return_requests ReturnRequest[]
   delivery_option SellerDeliveryOption?
   addresses       UserAddress[]
