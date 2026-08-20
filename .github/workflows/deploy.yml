@@ -16,6 +16,7 @@ concurrency:
 env:
   NODE_VERSION: '24'
   PNPM_VERSION: '10'
+  DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://ci:ci@localhost:5432/ci?schema=public' }}
   RELEASE_ARTIFACT: bestkid-release
   PM2_APP_NAME: ${{ secrets.PM2_APP_NAME || 'bestkid-api' }}
   DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/var/www/bestkid' }}
