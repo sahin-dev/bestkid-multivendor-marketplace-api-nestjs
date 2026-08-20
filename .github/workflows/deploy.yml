@@ -158,6 +158,12 @@ jobs:
 
           mkdir -p "$DEPLOY_PATH/releases" "$SHARED_DIR/uploads" "$SHARED_DIR/logs"
 
+          echo "Deploy host: $(hostname)"
+          echo "Deploy user: $DEPLOY_USER"
+          echo "Deploy path: $DEPLOY_PATH"
+          echo "Shared directory contents:"
+          ls -la "$SHARED_DIR"
+
           if [ ! -f "$SHARED_DIR/.env" ]; then
             echo "Missing production env file: $SHARED_DIR/.env"
             exit 1
