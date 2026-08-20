@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  NODE_VERSION: '22'
+  NODE_VERSION: '24'
   PNPM_VERSION: '10'
   RELEASE_ARTIFACT: bestkid-release
   PM2_APP_NAME: ${{ secrets.PM2_APP_NAME || 'bestkid-api' }}
