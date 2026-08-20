@@ -142,6 +142,20 @@ jobs:
           SHARED_DIR="$DEPLOY_PATH/shared"
           CURRENT_LINK="$DEPLOY_PATH/current"
 
+          DEPLOY_USER="$(id -un)"
+          DEPLOY_GROUP="$(id -gn)"
+
+          if [ ! -d "$DEPLOY_PATH" ] || [ ! -w "$DEPLOY_PATH" ]; then
+            if sudo -n true >/dev/null 2>&1; then
+              sudo mkdir -p "$DEPLOY_PATH/releases" "$SHARED_DIR/uploads" "$SHARED_DIR/logs"
+              sudo chown -R "$DEPLOY_USER:$DEPLOY_GROUP" "$DEPLOY_PATH"
+            else
+              echo "Deploy user '$DEPLOY_USER' cannot write to $DEPLOY_PATH and passwordless sudo is unavailable."
+              echo "Run on the EC2 server: sudo mkdir -p '$DEPLOY_PATH' && sudo chown -R '$DEPLOY_USER:$DEPLOY_GROUP' '$DEPLOY_PATH'"
+              exit 1
+            fi
+          fi
+
           mkdir -p "$DEPLOY_PATH/releases" "$SHARED_DIR/uploads" "$SHARED_DIR/logs"
 
           if [ ! -f "$SHARED_DIR/.env" ]; then
