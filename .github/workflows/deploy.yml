@@ -180,8 +180,18 @@ jobs:
           cd "$RELEASE_DIR"
 
           if ! command -v pnpm >/dev/null 2>&1; then
-            corepack enable
-            corepack prepare pnpm@10 --activate
+            if command -v corepack >/dev/null 2>&1; then
+              corepack enable
+              corepack prepare pnpm@10 --activate
+            elif command -v npm >/dev/null 2>&1; then
+              if ! npm install -g pnpm@10; then
+                sudo -n npm install -g pnpm@10
+              fi
+            else
+              echo "pnpm is not installed, and neither corepack nor npm is available on this server."
+              echo "Install Node.js 24 and pnpm 10 on the EC2 server, then rerun this workflow."
+              exit 1
+            fi
           fi
 
           pnpm install --frozen-lockfile
