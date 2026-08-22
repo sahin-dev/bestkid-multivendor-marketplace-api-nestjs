@@ -69,6 +69,7 @@ jobs:
           cp package.json release/package.json
           cp pnpm-lock.yaml release/pnpm-lock.yaml
           cp ecosystem.config.js release/ecosystem.config.js
+          cp prisma.config.ts release/prisma.config.ts
           cp -r prisma release/prisma
 
           if [ -d generated ]; then
