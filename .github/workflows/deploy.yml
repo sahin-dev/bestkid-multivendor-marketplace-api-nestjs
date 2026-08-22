@@ -186,6 +186,12 @@ jobs:
           ln -sfn "$SHARED_DIR/uploads" "$RELEASE_DIR/uploads"
           ln -sfn "$SHARED_DIR/logs" "$RELEASE_DIR/logs"
 
+          if [ -f "$SHARED_DIR/firebase-service-account.json" ]; then
+            ln -sfn "$SHARED_DIR/firebase-service-account.json" "$RELEASE_DIR/firebase-service-account.json"
+          else
+            echo "Warning: $SHARED_DIR/firebase-service-account.json not found; Firebase push notifications will stay disabled."
+          fi
+
           cd "$RELEASE_DIR"
 
           if ! command -v pnpm >/dev/null 2>&1; then
