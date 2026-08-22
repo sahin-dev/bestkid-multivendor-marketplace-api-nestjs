@@ -31,6 +31,15 @@ describe("LegitGrailsService.submitProduct", () => {
             createOrder: jest.fn().mockResolvedValue({ id: "order-1", status: "queued" }),
         } as any;
 
+        (mapLegitGrailsResult as jest.Mock).mockReturnValue({
+            externalOrderId: "order-1",
+            providerStatus: "queued",
+            outcome: undefined,
+            productStatus: AuthenticationStatus.PENDING,
+            isTerminal: false,
+            hasVerdict: false,
+        });
+
         const service = new LegitGrailsService(
             prismaService,
             client,

@@ -81,10 +81,23 @@ export class LegitGrailsService {
         try {
             const response = await this.client.createOrder(orderPayload);
             const now = new Date();
-            const mappedTestResponse = this.config.test_mode ? mapLegitGrailsResult(response) : null;
+            const mapped = mapLegitGrailsResult(response);
 
-             if (this.config.test_mode && mappedTestResponse?.hasVerdict) {
-                await this.applyProductStatus(productId, mappedTestResponse.productStatus, now);
+            const updatedRequest = await this.prismaService.productAuthenticationRequest.update({
+                where: { id: localRequest.id },
+                data: {
+                    externalOrderId: mapped.externalOrderId,
+                    status: mapped.providerStatus,
+                    verdict: mapped.outcome,
+                    certificateUrl: mapped.certificateUrl,
+                    completedAt: mapped.isTerminal ? now : null,
+                    submittedAt: now,
+                    rawResponse: response,
+                },
+            });
+
+            if (this.config.test_mode && mapped.hasVerdict) {
+                await this.applyProductStatus(productId, mapped.productStatus, now);
             } else {
                 await this.prismaService.product.update({
                     where: { id: productId },
@@ -92,15 +105,7 @@ export class LegitGrailsService {
                 });
             }
 
-            return await this.prismaService.productAuthenticationRequest.update({
-                where: { id: localRequest.id },
-                data: {
-                    externalOrderId: response?.id ? String(response.id) : undefined,
-                    status: response?.status ?? "queued",
-                    submittedAt: now,
-                    rawResponse: response,
-                },
-            });
+            return updatedRequest;
         } catch (error) {
             await this.prismaService.productAuthenticationRequest.update({
                 where: { id: localRequest.id },
