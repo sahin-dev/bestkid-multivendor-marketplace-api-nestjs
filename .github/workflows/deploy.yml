@@ -232,11 +232,14 @@ jobs:
 
           pm2 save
 
+          HEALTH_STATUS=0
           if [ -n "$HEALTHCHECK_URL" ]; then
-            curl --fail --silent --show-error --retry 5 --retry-delay 5 "$HEALTHCHECK_URL" >/dev/null
+            curl --fail --silent --show-error --retry 5 --retry-delay 5 --retry-connrefused "$HEALTHCHECK_URL" >/dev/null || HEALTH_STATUS=$?
           fi
 
           cd "$DEPLOY_PATH/releases"
           ls -1dt */ | tail -n +6 | xargs -r rm -rf
           rm -f "$RELEASE_TARBALL"
+
+          exit "$HEALTH_STATUS"
           REMOTE
