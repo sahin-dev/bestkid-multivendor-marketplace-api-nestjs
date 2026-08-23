@@ -98,8 +98,35 @@ export class CreateStripeCheckoutSessionDto {
 
     @Type(() => Number)
     @IsInt()
-    @ApiProperty({ description: "Saved address ID selected on checkout page" })
-    addressId: number;
+    @IsOptional()
+    @ApiPropertyOptional({ description: "Product ID for direct Buy Now checkout. Do not combine with sellerIds or cartItemIds." })
+    productId?: number;
+
+    @Type(() => Number)
+    @IsInt()
+    @IsOptional()
+    @ApiPropertyOptional({ description: "Saved address ID selected on checkout page" })
+    addressId?: number;
+
+    @IsString()
+    @IsOptional()
+    @ApiPropertyOptional({ description: "Shipping address. Required when addressId is not provided." })
+    shippingAddress?: string;
+
+    @IsString()
+    @IsOptional()
+    @ApiPropertyOptional({ description: "City. Required when addressId is not provided." })
+    city?: string;
+
+    @IsString()
+    @IsOptional()
+    @ApiPropertyOptional({ description: "Postal code" })
+    postalCode?: string;
+
+    @IsString()
+    @IsOptional()
+    @ApiPropertyOptional({ description: "Country code (e.g. US, BD). Required when addressId is not provided." })
+    country?: string;
 
     @IsString()
     @IsOptional()
@@ -142,6 +169,11 @@ export class BuyNowCheckoutSummaryDto {
     @IsOptional()
     @ApiPropertyOptional({ description: "Country code (e.g. US, BD). Required when addressId is not provided." })
     country?: string;
+
+    @IsString()
+    @IsOptional()
+    @ApiPropertyOptional({ description: "Coupon code to preview for direct checkout", example: "KIDS20" })
+    couponCode?: string;
 }
 
 export class CreateBuyNowCheckoutSessionDto extends BuyNowCheckoutSummaryDto {

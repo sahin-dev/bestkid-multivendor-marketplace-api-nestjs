@@ -646,6 +646,68 @@ export class ProductService {
         };
     }
 
+    async findProductByIdAdmin(id: number) {
+        const product = await this.prismaService.product.findUnique({
+            where: { id },
+            include: {
+                category: true,
+                subCategory: true,
+                user: {
+                    select: {
+                        id: true,
+                        email: true,
+                        seller_tier: true,
+                        stripe_account_id: true,
+                        stripe_onboarding_complete: true,
+                        profile: { select: { full_name: true, avatar_url: true, phone: true, country: true } },
+                        delivery_option: true,
+                    },
+                },
+                reviews: {
+                    orderBy: { createdAt: "desc" },
+                    take: 10,
+                    include: {
+                        user: {
+                            select: {
+                                id: true,
+                                email: true,
+                                profile: { select: { full_name: true, avatar_url: true } },
+                            },
+                        },
+                    },
+                },
+                authentication_requests: {
+                    orderBy: [{ createdAt: Prisma.SortOrder.desc }],
+                },
+            },
+        });
+
+        if (!product) {
+            throw new NotFoundException(`Product with ID ${id} not found`);
+        }
+
+        const [ordersCount, wishlistCount, cartCount] = await Promise.all([
+            this.prismaService.orderItem.count({ where: { productId: id } }),
+            this.prismaService.wishlistItem.count({ where: { productId: id } }),
+            this.prismaService.cartItem.count({ where: { productId: id } }),
+        ]);
+
+        const productWithImages = this.mergeProductImageUrls(product);
+
+        return {
+            ...productWithImages,
+            effective_price: product.discounted_price ?? product.original_price,
+            seller: product.user,
+            latest_request: product.authentication_requests?.[0] ?? null,
+            admin_summary: {
+                orders_count: ordersCount,
+                wishlist_count: wishlistCount,
+                cart_count: cartCount,
+                reviews_count: product.total_reviews,
+            },
+        };
+    }
+
     async updateProductAuthStatusAdmin(id: number, status: AuthenticationStatus) {
         const product = await this.prismaService.product.findUnique({ where: { id } });
         if (!product) {

@@ -66,6 +66,15 @@ export class ProductController {
         return this.productService.findAllProductsAdmin(query);
     }
 
+    @Get("admin/:id")
+    @ApiBearerAuth("access-token")
+    @Roles("ADMIN")
+    @ApiOperation({ summary: "Admin: get single product details" })
+    @ApiParam({ name: "id", type: Number })
+    async findProductByIdAdmin(@Param("id", ParseIntPipe) productId: number) {
+        return this.productService.findProductByIdAdmin(productId);
+    }
+
     @Get("seller/my")
     @ApiBearerAuth("access-token")
     @Roles("USER", "ADMIN")

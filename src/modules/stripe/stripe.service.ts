@@ -104,6 +104,25 @@ export class StripeService {
             throw new BadRequestException("You must agree to the Terms & Conditions and Privacy Policy before payment.");
         }
 
+        if (dto.productId !== undefined) {
+            if (dto.sellerIds?.length || dto.cartItemIds?.length) {
+                throw new BadRequestException("Use either productId for Buy Now or sellerIds/cartItemIds for cart checkout, not both.");
+            }
+
+            return this.createBuyNowCheckoutSession(userId, {
+                productId: dto.productId,
+                addressId: dto.addressId,
+                shippingAddress: dto.shippingAddress,
+                city: dto.city,
+                postalCode: dto.postalCode,
+                country: dto.country,
+                couponCode: dto.couponCode,
+                successUrl: dto.successUrl,
+                cancelUrl: dto.cancelUrl,
+                acceptedTerms: true,
+            });
+        }
+
         const user = await this.prismaService.baseUser.findUnique({
             where: { id: userId },
             select: { email: true },
@@ -116,6 +135,7 @@ export class StripeService {
             sellerIds: dto.sellerIds,
             cartItemIds: dto.cartItemIds,
             addressId: dto.addressId,
+            country: dto.country,
             couponCode: dto.couponCode,
         });
         const amountTotal = checkoutSummary.price_details.total;
@@ -130,11 +150,16 @@ export class StripeService {
             sellerIds: dto.sellerIds,
             cartItemIds: dto.cartItemIds,
             addressId: dto.addressId,
+            shippingAddress: dto.shippingAddress,
+            city: dto.city,
+            postalCode: dto.postalCode,
+            country: dto.country,
             couponCode: dto.couponCode,
             acceptedTerms: true,
         });
 
         const orderIds = orderResult.orders.map((o) => o.id).join(",");
+        const cartItemIds = orderResult.cart_item_ids.join(",");
 
         // Step 2: Create Stripe checkout session with orderId in metadata
         const session = await this.stripe.checkout.sessions.create({
@@ -163,6 +188,7 @@ export class StripeService {
                 orderIds: orderIds,
                 addressId: String(dto.addressId),
                 cartId: String(orderResult.cart_id),
+                cartItemIds,
                 couponId: orderResult.coupon_id ? String(orderResult.coupon_id) : "",
                 total: String(amountTotal),
             },
@@ -178,6 +204,7 @@ export class StripeService {
                 checkoutMode: "cart",
                 orderIds: orderIds,
                 cartId: String(orderResult.cart_id),
+                cartItemIds,
             },
         });
 
@@ -214,9 +241,29 @@ export class StripeService {
         }
         const amountInCents = Math.round(amountTotal * 100);
         const item = checkoutSummary.seller_groups[0].items[0];
+        const sellerId = checkoutSummary.seller_groups[0].seller.id;
+        const seller = await this.prismaService.baseUser.findUnique({
+            where: { id: sellerId },
+            select: { stripe_account_id: true, stripe_onboarding_complete: true },
+        });
 
         if (amountInCents <= 0) {
             throw new BadRequestException("Checkout total must be greater than zero.");
+        }
+
+        if (!seller?.stripe_onboarding_complete || !seller.stripe_account_id) {
+            throw new BadRequestException("Seller has not completed Stripe onboarding.");
+        }
+
+        const platformFeePercent = this.getPlatformFeePercent();
+        const platformFeeAmount = this.calculatePlatformFeeAmount(amountInCents, platformFeePercent);
+        const paymentIntentData: Stripe.Checkout.SessionCreateParams.PaymentIntentData = {
+            transfer_data: {
+                destination: seller.stripe_account_id,
+            },
+        };
+        if (platformFeeAmount > 0) {
+            paymentIntentData.application_fee_amount = platformFeeAmount;
         }
 
         // Step 1: Create pending buy-now order (before Stripe session)
@@ -227,6 +274,7 @@ export class StripeService {
             city: dto.city,
             postalCode: dto.postalCode,
             country: dto.country,
+            couponCode: dto.couponCode,
             acceptedTerms: true,
         });
 
@@ -240,6 +288,7 @@ export class StripeService {
             cancel_url: dto.cancelUrl,
             customer_email: user.email,
             client_reference_id: String(userId),
+            payment_intent_data: paymentIntentData,
             line_items: [
                 {
                     price_data: {
@@ -247,7 +296,7 @@ export class StripeService {
                         product_data: {
                             name: item.product.name,
                             description: "Buy Now checkout",
-                            images: item.product.image_url ? [item.product.image_url] : undefined,
+                            images: this.getStripeProductImages(item.product.image_url),
                         },
                         unit_amount: amountInCents,
                     },
@@ -259,6 +308,10 @@ export class StripeService {
                 userId: String(userId),
                 orderId: String(orderId),
                 productId: String(dto.productId),
+                sellerId: String(sellerId),
+                couponId: orderResult.coupon_id ? String(orderResult.coupon_id) : "",
+                platformFeePercent: String(platformFeePercent),
+                platformFeeAmount: String(platformFeeAmount / 100),
                 total: String(amountTotal),
             },
         });
@@ -274,6 +327,10 @@ export class StripeService {
                 checkoutMode: "buy_now",
                 orderId: String(orderId),
                 productId: String(dto.productId),
+                sellerId: String(sellerId),
+                couponId: orderResult.coupon_id ? String(orderResult.coupon_id) : "",
+                platformFeePercent: String(platformFeePercent),
+                platformFeeAmount: String(platformFeeAmount / 100),
             },
         });
 
@@ -285,6 +342,45 @@ export class StripeService {
             checkout_summary: checkoutSummary,
             pending_order: orderResult.order,
         };
+    }
+
+    private getPlatformFeePercent() {
+        const configuredPercent = Number(this.stripeConfiguration.platform_fee_percent ?? 10);
+        if (!Number.isFinite(configuredPercent) || configuredPercent < 0 || configuredPercent > 100) {
+            throw new BadRequestException("STRIPE_PLATFORM_FEE_PERCENT must be a number between 0 and 100.");
+        }
+        return configuredPercent;
+    }
+
+    private calculatePlatformFeeAmount(amountInCents: number, platformFeePercent: number) {
+        return Math.min(amountInCents, Math.round((amountInCents * platformFeePercent) / 100));
+    }
+
+    private getStripeProductImages(imageUrl?: string | null) {
+        const absoluteUrl = this.toStripeImageUrl(imageUrl);
+        return absoluteUrl ? [absoluteUrl] : undefined;
+    }
+
+    private toStripeImageUrl(imageUrl?: string | null) {
+        const trimmedUrl = imageUrl?.trim();
+        if (!trimmedUrl) {
+            return undefined;
+        }
+
+        if (/^https?:\/\//i.test(trimmedUrl)) {
+            return trimmedUrl;
+        }
+
+        if (!trimmedUrl.startsWith("/")) {
+            return undefined;
+        }
+
+        const baseUrl = process.env.SWAGGER_SERVER_URL?.trim();
+        if (!baseUrl) {
+            return undefined;
+        }
+
+        return `${baseUrl.replace(/\/+$/, "")}${trimmedUrl}`;
     }
 
     /**
@@ -384,6 +480,7 @@ export class StripeService {
                   .filter((id) => Number.isInteger(id) && id > 0)
             : [];
         const cartId = Number(session.metadata?.cartId);
+        const cartItemIds = this.numberArrayFromMetadata(session.metadata?.cartItemIds);
 
         if (orderIds.length === 0) {
             this.logger.warn(`Skipping checkout.session.completed ${session.id}: missing orderIds metadata.`);
@@ -403,7 +500,10 @@ export class StripeService {
             // Step 3: Delete cart items for this cart
             if (cartId) {
                 await this.prismaService.cartItem.deleteMany({
-                    where: { cartId },
+                    where: {
+                        cartId,
+                        ...(cartItemIds ? { id: { in: cartItemIds } } : {}),
+                    },
                 });
             }
 

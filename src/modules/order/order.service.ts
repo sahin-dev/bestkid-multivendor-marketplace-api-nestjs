@@ -771,6 +771,7 @@ export class OrderService {
             city?: string;
             postalCode?: string;
             country?: string;
+            couponCode?: string;
         },
     ) {
         const user = await this.prismaService.baseUser.findUnique({
@@ -830,7 +831,12 @@ export class OrderService {
         const unitPrice = this.roundMoney(product.discounted_price ?? product.original_price);
         const subtotal = unitPrice;
         const shippingFee = this.roundMoney(delivery.cost);
-        const total = this.roundMoney(subtotal + shippingFee);
+        const couponItem = { product, productId: product.id };
+        const coupon = dto.couponCode
+            ? await this.validateCouponForCart(dto.couponCode, [couponItem])
+            : null;
+        const discountAmount = coupon?.discount_amount ?? 0;
+        const total = this.roundMoney(subtotal + shippingFee - discountAmount);
 
         return {
             selected_seller_ids: [product.userId],
@@ -869,18 +875,27 @@ export class OrderService {
                     ],
                     subtotal,
                     delivery_cost: shippingFee,
-                    discount_amount: 0,
+                    discount_amount: discountAmount,
                     total,
                 },
             ],
             addresses: user.addresses,
             // selected_address: checkoutAddress,
             requires_address_selection: false,
-            coupon: null,
+            coupon: coupon
+                ? {
+                      id: coupon.id,
+                      code: coupon.code,
+                      discount_type: coupon.discount_type,
+                      discount_value: coupon.discount_value,
+                      discount_amount: coupon.discount_amount,
+                      message: coupon.message,
+                  }
+                : null,
             price_details: {
                 subtotal,
                 shipping_fee: shippingFee,
-                discount: 0,
+                discount: discountAmount,
                 total,
             },
             terms_required: true,
@@ -1246,7 +1261,12 @@ export class OrderService {
             }
         });
 
-        return { orders: createdOrders, cart_id: summary.cart_id, coupon_id: summary.coupon?.id };
+        return {
+            orders: createdOrders,
+            cart_id: summary.cart_id,
+            cart_item_ids: summary.selected_cart_item_ids,
+            coupon_id: summary.coupon?.id,
+        };
     }
 
     /**
@@ -1264,6 +1284,7 @@ export class OrderService {
             city: checkoutAddress.city ?? undefined,
             postalCode: checkoutAddress.postalCode ?? undefined,
             country: checkoutAddress.country ?? undefined,
+            couponCode: dto.couponCode,
         });
 
         const group = summary.seller_groups[0];
@@ -1300,7 +1321,7 @@ export class OrderService {
             return createdOrder;
         });
 
-        return { order };
+        return { order, coupon_id: summary.coupon?.id };
     }
 
     /**
