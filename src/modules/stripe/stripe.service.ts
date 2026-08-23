@@ -497,18 +497,13 @@ export class StripeService {
     }
 
     private getConfiguredTierFeePercent(sellerTier: SellerTier) {
-        const fallbackPercent =
-            this.stripeConfiguration.platform_fee_percent ?? 10;
         const tierPercent: Record<SellerTier, string | number | undefined> = {
             [SellerTier.BASIC_SELLER]:
-                this.stripeConfiguration.basic_seller_fee_percent ??
-                fallbackPercent,
+                this.stripeConfiguration.basic_seller_fee_percent ?? 10,
             [SellerTier.STANDARD_SELLER]:
-                this.stripeConfiguration.standard_seller_fee_percent ??
-                fallbackPercent,
+                this.stripeConfiguration.standard_seller_fee_percent ?? 10,
             [SellerTier.PREMIUM_SELLER]:
-                this.stripeConfiguration.premium_seller_fee_percent ??
-                fallbackPercent,
+                this.stripeConfiguration.premium_seller_fee_percent ?? 10,
         };
         return tierPercent[sellerTier];
     }
@@ -519,7 +514,7 @@ export class StripeService {
             [SellerTier.STANDARD_SELLER]: "STRIPE_STANDARD_SELLER_FEE_PERCENT",
             [SellerTier.PREMIUM_SELLER]: "STRIPE_PREMIUM_SELLER_FEE_PERCENT",
         };
-        return `${names[sellerTier]} or STRIPE_PLATFORM_FEE_PERCENT`;
+        return names[sellerTier];
     }
 
     private calculatePlatformFeeAmount(
