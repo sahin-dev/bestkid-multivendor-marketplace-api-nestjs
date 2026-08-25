@@ -101,4 +101,5 @@ enum CurrencyPreference {
   EUR
   AED
   GBP
+  RON
 }

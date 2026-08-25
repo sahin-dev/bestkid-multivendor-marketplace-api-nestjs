@@ -65,11 +65,13 @@ async function bootstrap() {
     .addTag('Account Settings', 'Addresses, preferences, connected account, and account deletion')
     .addTag('Profile', 'Authenticated user/admin profile and password management')
     .addTag('Seller', 'Seller account options and seller earnings')
+    .addTag('Admin Home Banners', 'Admin homepage banner carousel management')
     .addTag('Delivery', 'Seller delivery options')
     .addTag('Content', 'FAQ, legal documents, company info, and help/support requests')
     .addTag('Notifications', 'Notification list and read state')
     .addTag('Chat', 'Chat rooms and messages')
     .addTag('Stripe', 'Stripe buyer checkout sessions, seller onboarding, and admin connected accounts')
+    .addTag('TBI Credit', 'TBI Fusion Pay installment calculations, applications, and status updates')
     .addTag('LegitGrails', 'Product authentication submissions and webhook results')
     .addTag('Uploads', 'File upload and deletion')
     .addBearerAuth(

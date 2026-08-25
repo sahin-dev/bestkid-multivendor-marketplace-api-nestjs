@@ -11,6 +11,7 @@ import jwtConfig from './config/jwt.config';
 import stripeConfig from './config/stripe.config';
 import legitgrailsConfig from './config/legitgrails.config';
 import firebaseConfig from './config/firebase.config';
+import tbiCreditConfig from './config/tbi-credit.config';
 import { ProfileModule } from './modules/profile/profile.module';
 import { FileUploadModule } from './modules/file-upload/file-upload.module';
 import { CategoryModule } from './modules/category/category.module';
@@ -34,12 +35,14 @@ import { PaymentModule } from './modules/payment/payment.module';
 import { SentryModule } from '@sentry/nestjs/setup';
 import { LegitGrailsModule } from './modules/legitgrails/legitgrails.module';
 import { CurrencyConversionService } from './modules/currency/currency.service';
+import { HomeBannerModule } from './modules/home-banner/home-banner.module';
+import { TbiCreditModule } from './modules/tbi-credit/tbi-credit.module';
 
 @Module({
   imports: [
     SentryModule.forRoot(),
     ScheduleModule.forRoot(),
-    ConfigModule.forRoot({ isGlobal: true, load: [dbConfig, mailerConfig, jwtConfig, stripeConfig, legitgrailsConfig, firebaseConfig] }),
+    ConfigModule.forRoot({ isGlobal: true, load: [dbConfig, mailerConfig, jwtConfig, stripeConfig, legitgrailsConfig, firebaseConfig, tbiCreditConfig] }),
     PrismaModule,
     AuthModule,
     ProfileModule,
@@ -63,6 +66,8 @@ import { CurrencyConversionService } from './modules/currency/currency.service';
     WishlistModule,
     PaymentModule,
     LegitGrailsModule,
+    HomeBannerModule,
+    TbiCreditModule,
   ],
   controllers: [AppController],
   providers: [AppService, CurrencyConversionService],

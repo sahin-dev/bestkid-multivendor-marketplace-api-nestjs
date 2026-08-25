@@ -1481,6 +1481,65 @@ export class OrderService {
         return confirmed;
     }
 
+    async finalizePaidOrders(params: {
+        orderIds: number[];
+        cartId?: number;
+        cartItemIds?: number[];
+        couponId?: number;
+    }) {
+        const orderIds = [...new Set(params.orderIds.filter((id) => Number.isInteger(id) && id > 0))];
+        if (!orderIds.length) {
+            throw new BadRequestException("No orders were provided for payment finalization.");
+        }
+
+        const confirmedOrders: any[] = [];
+        for (const orderId of orderIds) {
+            confirmedOrders.push(await this.confirmOrder(orderId, undefined, false));
+        }
+
+        if (params.cartId) {
+            await this.prismaService.cartItem.deleteMany({
+                where: {
+                    cartId: params.cartId,
+                    ...(params.cartItemIds?.length ? { id: { in: params.cartItemIds } } : {}),
+                },
+            });
+        }
+
+        if (params.couponId) {
+            await this.prismaService.coupon.update({
+                where: { id: params.couponId },
+                data: { used_count: { increment: 1 } },
+            });
+        }
+
+        for (const orderId of orderIds) {
+            await this.markProductsSoldForOrder(orderId);
+        }
+
+        return confirmedOrders;
+    }
+
+    async cancelPendingPaymentOrders(orderIds: number[], reason: string) {
+        const normalizedOrderIds = [...new Set(orderIds.filter((id) => Number.isInteger(id) && id > 0))];
+        if (!normalizedOrderIds.length) {
+            return { count: 0 };
+        }
+
+        return this.prismaService.order.updateMany({
+            where: {
+                id: { in: normalizedOrderIds },
+                status: OrderStatus.PENDING,
+            },
+            data: {
+                status: OrderStatus.CANCELLED,
+                cancelled_at: new Date(),
+                cancelled_by_actor: OrderCancellationActor.SYSTEM,
+                cancellation_reason: reason,
+            },
+        });
+    }
+
     /**
      * Atomically flips a single-unit product from ACTIVE to SOLD. The WHERE guard makes this
      * safe under concurrency — if two buyers race to check out the same item, only the first

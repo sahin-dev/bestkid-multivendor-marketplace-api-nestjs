@@ -13,9 +13,15 @@ export class PaymentService {
     orderId?: number;
     amount: number;
     currency?: string;
+    provider?: PaymentProvider;
     stripeSessionId?: string;
     stripePaymentIntentId?: string;
     stripeCustomerId?: string;
+    providerReferenceId?: string;
+    providerApplicationId?: string;
+    providerRedirectUrl?: string;
+    providerStatus?: string;
+    providerPayload?: Prisma.JsonValue;
     metadata?: Prisma.JsonValue;
   }) {
     return this.prismaService.paymentTransaction.create({
@@ -24,11 +30,16 @@ export class PaymentService {
         orderId: params.orderId,
         amount: params.amount,
         currency: params.currency ?? "usd",
-        provider: PaymentProvider.STRIPE,
+        provider: params.provider ?? PaymentProvider.STRIPE,
         status: PaymentStatus.PENDING,
         stripe_session_id: params.stripeSessionId,
         stripe_payment_intent_id: params.stripePaymentIntentId,
         stripe_customer_id: params.stripeCustomerId,
+        provider_reference_id: params.providerReferenceId,
+        provider_application_id: params.providerApplicationId,
+        provider_redirect_url: params.providerRedirectUrl,
+        provider_status: params.providerStatus,
+        provider_payload: params.providerPayload ?? undefined,
         metadata: params.metadata ?? undefined,
       },
     });
@@ -74,6 +85,54 @@ export class PaymentService {
   async findBySessionId(sessionId: string) {
     return this.prismaService.paymentTransaction.findUnique({
       where: { stripe_session_id: sessionId },
+    });
+  }
+
+  async findByProviderReferenceId(providerReferenceId: string) {
+    return this.prismaService.paymentTransaction.findUnique({
+      where: { provider_reference_id: providerReferenceId },
+    });
+  }
+
+  async findByProviderApplicationId(providerApplicationId: string) {
+    return this.prismaService.paymentTransaction.findUnique({
+      where: { provider_application_id: providerApplicationId },
+    });
+  }
+
+  async updateProviderStatus(
+    transactionId: number,
+    params: {
+      status: PaymentStatus;
+      providerStatus?: string;
+      providerApplicationId?: string;
+      providerPayload?: Prisma.JsonValue;
+      paymentStatus?: string;
+      metadata?: Prisma.JsonValue;
+    },
+  ) {
+    const data: Prisma.PaymentTransactionUpdateInput = {
+      status: params.status,
+    };
+    if (params.providerStatus !== undefined) {
+      data.provider_status = params.providerStatus;
+    }
+    if (params.providerApplicationId !== undefined) {
+      data.provider_application_id = params.providerApplicationId;
+    }
+    if (params.providerPayload !== undefined) {
+      data.provider_payload = params.providerPayload as Prisma.InputJsonValue;
+    }
+    if (params.paymentStatus !== undefined) {
+      data.payment_status = params.paymentStatus;
+    }
+    if (params.metadata !== undefined) {
+      data.metadata = params.metadata as Prisma.InputJsonValue;
+    }
+
+    return this.prismaService.paymentTransaction.update({
+      where: { id: transactionId },
+      data,
     });
   }
 }

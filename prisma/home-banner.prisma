@@ -1,0 +1,29 @@
+model HomeBanner {
+  id            Int       @id @default(autoincrement())
+  title         String
+  subtitle      String?
+  description   String?
+  image_url     String
+  button_text   String    @default("Shop Now")
+  categoryId    Int?
+  subCategoryId Int?
+  couponId      Int?
+  sort_order    Int       @default(0)
+  is_active     Boolean   @default(true)
+  start_date    DateTime?
+  end_date      DateTime?
+
+  category    Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  subCategory SubCategory? @relation(fields: [subCategoryId], references: [id], onDelete: SetNull)
+  coupon      Coupon?      @relation(fields: [couponId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([is_active])
+  @@index([sort_order])
+  @@index([categoryId])
+  @@index([subCategoryId])
+  @@index([couponId])
+  @@map("home_banners")
+}

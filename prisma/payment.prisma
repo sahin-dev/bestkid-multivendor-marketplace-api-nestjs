@@ -11,6 +11,12 @@ model PaymentTransaction {
   stripe_payment_intent_id String?
   stripe_customer_id      String?
 
+  provider_reference_id    String? @unique
+  provider_application_id  String? @unique
+  provider_redirect_url    String?
+  provider_status          String?
+  provider_payload         Json?
+
   payment_status          String?
   metadata                Json?
 
@@ -24,10 +30,14 @@ model PaymentTransaction {
   @@index([userId])
   @@index([orderId])
   @@index([stripe_session_id])
+  @@index([provider_reference_id])
+  @@index([provider_application_id])
+  @@index([provider_status])
 }
 
 enum PaymentProvider {
   STRIPE
+  TBI_CREDIT
 }
 
 enum PaymentStatus {

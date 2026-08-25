@@ -14,6 +14,7 @@ export class CurrencyConversionService {
         EUR: 0.92,
         AED: 3.67,
         GBP: 0.79,
+        RON: 4.58,
     };
     private cache: CurrencyRateMap = { ...this.fallbackRates };
     private cacheExpiryMs = 0;
@@ -73,7 +74,7 @@ export class CurrencyConversionService {
     }
 
     private async loadRatesFromProvider(): Promise<CurrencyRateMap> {
-        const targetCurrencies = [CurrencyPreference.EUR, CurrencyPreference.AED, CurrencyPreference.GBP];
+        const targetCurrencies = [CurrencyPreference.EUR, CurrencyPreference.AED, CurrencyPreference.GBP, CurrencyPreference.RON];
         const currencyQuery = targetCurrencies.join(",");
 
         try {

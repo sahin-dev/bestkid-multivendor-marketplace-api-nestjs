@@ -3,18 +3,22 @@ import { CurrencyPreference, ProductStatus } from 'generated/prisma/client';
 import { PaginationDto } from 'src/common/dtos/pagination.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { CurrencyConversionService } from '../currency/currency.service';
+import { HomeBannerService } from '../home-banner/home-banner.service';
 
 @Injectable()
 export class HomeService {
   constructor(
     private readonly prismaService: PrismaService,
     private readonly currencyService: CurrencyConversionService,
+    private readonly homeBannerService: HomeBannerService,
   ) {}
 
   async getHomepageData(userId?: number) {
     const purchasableProductWhere = this.getPurchasableProductWhere(userId);
 
-    const [categories, trending, promoted, newArrivals] = await Promise.all([
+    const [banners, categories, trending, promoted, newArrivals] = await Promise.all([
+      this.homeBannerService.findActiveForHomepage(),
+
       this.prismaService.category.findMany({
         include: {
           subCategories: { select: { id: true, name: true } },
@@ -110,6 +114,7 @@ export class HomeService {
     const userCurrency = await this.getUserCurrency(userId);
 
     return {
+      banners,
       categories: categories.map((category) => ({
         ...category,
         product_count: category._count.products,

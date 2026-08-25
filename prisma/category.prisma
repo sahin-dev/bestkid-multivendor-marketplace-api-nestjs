@@ -7,6 +7,7 @@ model Category {
 
   products     Product[]
   coupons      Coupon[]
+  homeBanners  HomeBanner[]
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -26,6 +27,7 @@ model SubCategory {
   category     Category  @relation(fields: [categoryId], references: [id])
   products     Product[]
   coupons      Coupon[]
+  homeBanners  HomeBanner[]
 
   @@index([id])
   @@map("sub_categories")

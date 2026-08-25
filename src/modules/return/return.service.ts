@@ -21,6 +21,7 @@ import { UpdateReturnStatusDto } from "./dtos/update-return-status.dto";
 import { ChatService } from "../chat/chat.service";
 import { assertEntityExists } from "src/common/validators/entity-exists.validator";
 import { StripeService } from "../stripe/stripe.service";
+import { TbiCreditService } from "../tbi-credit/tbi-credit.service";
 
 @Injectable()
 export class ReturnService {
@@ -29,6 +30,7 @@ export class ReturnService {
         private readonly notificationService: NotificationService,
         private readonly chatService: ChatService,
         private readonly stripeService: StripeService,
+        private readonly tbiCreditService: TbiCreditService,
     ) {}
 
     async createReturn(userId: number, dto: CreateReturnDto) {
@@ -673,6 +675,11 @@ export class ReturnService {
         if (alreadyRefundedAt) {
             return null;
         }
+
+        await this.tbiCreditService.markRefundRequiresManualProcessing(
+            returnId,
+            dto.refund_amount,
+        );
 
         return this.stripeService.refundReturnRequestPayment(
             returnId,
