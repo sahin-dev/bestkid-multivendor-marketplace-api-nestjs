@@ -47,18 +47,12 @@ export class HomeController {
   }
 
   @Get('recently-viewed')
+  @ApiBearerAuth('access-token')
   @ApiOperation({ summary: 'Get recently viewed products for logged-in user' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
-  async getRecentlyViewed(@Req() req: Request, @Query() query: PaginationDto) {
-    const user = req['payload'] as { id: number } | undefined;
-    if (!user?.id) {
-      return {
-        data: [],
-        message: 'Login to see your recently viewed products.',
-      };
-    }
-    return this.homeService.getRecentlyViewedForUser(user.id, query);
+  async getRecentlyViewed(@GetUser('id') userId: number, @Query() query: PaginationDto) {
+    return this.homeService.getRecentlyViewedForUser(userId, query);
   }
 
   @Get('featured-coupon')

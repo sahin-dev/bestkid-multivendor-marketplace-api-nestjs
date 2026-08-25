@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { Pool } from "pg";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { PrismaClient } from "../generated/prisma/client";
+import { Condition, PrismaClient } from "../generated/prisma/client";
 import bcrypt from "bcrypt";
 
 const connectionString = process.env.DATABASE_URL;
@@ -178,7 +178,10 @@ const legitGrailsSeedScenarios: Array<{
       outcome: null,
       photos_to_resubmit: [
         { index_code: "overall-picture", reason: "The image is too blurry." },
-        { index_code: "serial-number", reason: "The serial number is not readable." },
+        {
+          index_code: "serial-number",
+          reason: "The serial number is not readable.",
+        },
       ],
     },
   },
@@ -382,10 +385,7 @@ async function upsertUser(input: {
   });
 }
 
-async function seedDeliveryOptions(
-  sellerId: number,
-  seller: (typeof sellerUsers)[number],
-) {
+async function seedDeliveryOptions(sellerId: number, seller: (typeof sellerUsers)[number]) {
   await prisma.sellerDeliveryOption.upsert({
     where: { sellerId },
     update: {
@@ -434,73 +434,125 @@ async function seedAccountAddresses(sellerId: number, country: string) {
   });
 }
 
-async function seedProducts(
-  sellers: SeedUser[],
-  categories: SeedCategory[],
-) {
+async function seedProducts(sellers: SeedUser[], categories: SeedCategory[]) {
   const products: Record<number, { id: number; price: number }[]> = {};
+  const brands = ["Nike", "Adidas", "Zara Kids", "H&M Kids", "Mango Kids", "Puma", "Mothercare"];
+  const liveProductCountPerSeller = 7;
+  const nonLiveProductStatuses: Array<{
+    suffix: string;
+    status: "INACTIVE" | "SOLD";
+    authentication_status: "NOT_SUBMITTED" | "PENDING" | "VERIFIED" | "NOT_VERIFIED";
+    is_authenticated: boolean;
+  }> = [
+    {
+      suffix: "Draft",
+      status: "INACTIVE",
+      authentication_status: "NOT_SUBMITTED",
+      is_authenticated: false,
+    },
+    {
+      suffix: "Pending Review",
+      status: "INACTIVE",
+      authentication_status: "PENDING",
+      is_authenticated: false,
+    },
+    {
+      suffix: "Needs More Photos",
+      status: "INACTIVE",
+      authentication_status: "PENDING",
+      is_authenticated: false,
+    },
+    {
+      suffix: "Rejected",
+      status: "INACTIVE",
+      authentication_status: "NOT_VERIFIED",
+      is_authenticated: false,
+    },
+    {
+      suffix: "Sold",
+      status: "SOLD",
+      authentication_status: "VERIFIED",
+      is_authenticated: true,
+    },
+  ];
+
+  async function upsertSeedProduct(input: {
+    seller: SeedUser;
+    index: number;
+    name: string;
+    status: "ACTIVE" | "INACTIVE" | "SOLD";
+    authentication_status: "NOT_SUBMITTED" | "PENDING" | "VERIFIED" | "NOT_VERIFIED";
+    is_authenticated: boolean;
+  }) {
+    const category = categories[input.index % categories.length];
+    const subCategory = category.subCategories[input.index % category.subCategories.length];
+    const originalPrice = 18 + (input.index % 12) * 6;
+    const discountedPrice = input.index % 2 === 0 ? originalPrice - 3 : null;
+    const moderatedAt = new Date(Date.now() - (input.index + 1) * 24 * 60 * 60 * 1000);
+    const productData = {
+      name: input.name,
+      description: `Seeded ${input.status.toLowerCase()} product for ${input.seller.profile?.full_name ?? "seller"}. Size: ${input.index % 2 === 0 ? "M" : "L"}.`,
+      brand: brands[input.index % brands.length],
+      original_price: originalPrice,
+      discounted_price: discountedPrice,
+      discount_percentage: discountedPrice ? Math.round(((originalPrice - discountedPrice) / originalPrice) * 100) : null,
+      image_urls: ["/uploads/shoes.jpg"],
+      categoryId: category.id,
+      subCategoryId: subCategory.id,
+      userId: input.seller.id,
+      condition: input.index % 3 === 0 ? Condition.NEW : input.index % 3 === 1 ? Condition.USED : Condition.REFURBISHED,
+      status: input.status,
+      is_authenticated: input.is_authenticated,
+      authentication_status: input.authentication_status,
+      approved_at: input.authentication_status === "VERIFIED" ? moderatedAt : null,
+      rejected_at: input.authentication_status === "NOT_VERIFIED" ? moderatedAt : null,
+      sold_at: input.status === "SOLD" ? moderatedAt : null,
+    };
+
+    const existing = await prisma.product.findFirst({
+      where: { userId: input.seller.id, name: input.name },
+    });
+
+    return existing
+      ? await prisma.product.update({
+          where: { id: existing.id },
+          data: productData,
+        })
+      : await prisma.product.create({ data: productData });
+  }
 
   for (const seller of sellers) {
     products[seller.id] = [];
 
-    for (let index = 0; index < 4; index++) {
-      const category = categories[index % categories.length];
-      const subCategory = category.subCategories[index % category.subCategories.length];
+    for (let index = 0; index < liveProductCountPerSeller; index++) {
       const name = `${seller.profile?.full_name ?? "Seller"} Kids Item ${index + 1}`;
-      const authenticationStatus = index === 3 ? "NOT_VERIFIED" : index % 2 === 0 ? "VERIFIED" : "PENDING";
-      const isAuthenticated = authenticationStatus === "VERIFIED";
-      const moderatedAt = new Date(Date.now() - (index + 1) * 24 * 60 * 60 * 1000);
-      const existing = await prisma.product.findFirst({
-        where: { userId: seller.id, name },
-      });
-
-      if (existing) {
-        await prisma.product.update({
-          where: { id: existing.id },
-          data: {
-            status: existing.status === "SOLD" ? existing.status : isAuthenticated ? "ACTIVE" : "INACTIVE",
-            authentication_status: authenticationStatus,
-            is_authenticated: isAuthenticated,
-            approved_at: authenticationStatus === "VERIFIED" ? (existing.approved_at ?? moderatedAt) : null,
-            rejected_at: authenticationStatus === "NOT_VERIFIED" ? (existing.rejected_at ?? moderatedAt) : null,
-          },
-        });
-        products[seller.id].push({
-          id: existing.id,
-          price: existing.discounted_price ?? existing.original_price,
-        });
-        continue;
-      }
-
-      const originalPrice = 18 + index * 7;
-      const discountedPrice = index % 2 === 0 ? originalPrice - 3 : null;
-      const brands = ["Nike", "Adidas", "Zara Kids", "H&M Kids"];
-      const product = await prisma.product.create({
-        data: {
-          name,
-          description: `Seeded product for ${seller.profile?.full_name ?? "seller"}. Size: ${index % 2 === 0 ? "M" : "L"}.`,
-          brand: brands[index % brands.length],
-          original_price: originalPrice,
-          discounted_price: discountedPrice,
-          discount_percentage: discountedPrice ? Math.round(((originalPrice - discountedPrice) / originalPrice) * 100) : null,
-          image_urls: ["/uploads/shoes.jpg"],
-          categoryId: category.id,
-          subCategoryId: subCategory.id,
-          userId: seller.id,
-          condition: index % 2 === 0 ? "NEW" : "USED",
-          status: isAuthenticated ? "ACTIVE" : "INACTIVE",
-          is_authenticated: isAuthenticated,
-          authentication_status: authenticationStatus,
-          approved_at: authenticationStatus === "VERIFIED" ? moderatedAt : null,
-          rejected_at: authenticationStatus === "NOT_VERIFIED" ? moderatedAt : null,
-        },
+      const product = await upsertSeedProduct({
+        seller,
+        index,
+        name,
+        status: "ACTIVE",
+        authentication_status: "VERIFIED",
+        is_authenticated: true,
       });
 
       products[seller.id].push({
         id: product.id,
-        price: discountedPrice ?? originalPrice,
+        price: product.discounted_price ?? product.original_price,
       });
     }
+  }
+
+  for (let index = 0; index < 20; index++) {
+    const seller = sellers[index % sellers.length];
+    const statusSeed = nonLiveProductStatuses[index % nonLiveProductStatuses.length];
+    await upsertSeedProduct({
+      seller,
+      index: index + 100,
+      name: `${seller.profile?.full_name ?? "Seller"} ${statusSeed.suffix} Item ${Math.floor(index / nonLiveProductStatuses.length) + 1}`,
+      status: statusSeed.status,
+      authentication_status: statusSeed.authentication_status,
+      is_authenticated: statusSeed.is_authenticated,
+    });
   }
 
   return products;
@@ -516,9 +568,18 @@ async function seedLegitGrailsProductFlows(sellers: SeedUser[], products: Record
     for (const scenario of legitGrailsSeedScenarios) {
       const scenarioAny = scenario as any;
       const productName = `${seller.profile?.full_name ?? "Seller"} LegitGrails ${scenario.label}`;
-      const product = await prisma.product.findFirst({ where: { userId: seller.id, name: productName } });
-      const category = await prisma.category.findFirst({ orderBy: { id: "asc" } });
-      const subCategory = category ? await prisma.subCategory.findFirst({ where: { categoryId: category.id }, orderBy: { id: "asc" } }) : null;
+      const product = await prisma.product.findFirst({
+        where: { userId: seller.id, name: productName },
+      });
+      const category = await prisma.category.findFirst({
+        orderBy: { id: "asc" },
+      });
+      const subCategory = category
+        ? await prisma.subCategory.findFirst({
+            where: { categoryId: category.id },
+            orderBy: { id: "asc" },
+          })
+        : null;
 
       const productData = {
         name: productName,
@@ -540,7 +601,10 @@ async function seedLegitGrailsProductFlows(sellers: SeedUser[], products: Record
       };
 
       const createdProduct = product
-        ? await prisma.product.update({ where: { id: product.id }, data: productData })
+        ? await prisma.product.update({
+            where: { id: product.id },
+            data: productData,
+          })
         : await prisma.product.create({ data: productData });
 
       if (scenario.requestStatus) {
@@ -593,19 +657,21 @@ async function seedLegitGrailsProductFlows(sellers: SeedUser[], products: Record
   }
 }
 
-async function seedOrdersAndReturns(
-  sellers: SeedUser[],
-  buyers: SeedUser[],
-  products: Record<number, { id: number; price: number }[]>,
-) {
+async function seedOrdersAndReturns(sellers: SeedUser[], buyers: SeedUser[], products: Record<number, { id: number; price: number }[]>) {
   const existingOrders = await prisma.order.count({
     where: { sellerId: { in: sellers.map((seller) => seller.id) } },
   });
 
   if (existingOrders > 0) {
     const existingOrderItems = await prisma.orderItem.findMany({
-      where: { order: { sellerId: { in: sellers.map((seller) => seller.id) } } },
-      select: { id: true, productId: true, order: { select: { userId: true } } },
+      where: {
+        order: { sellerId: { in: sellers.map((seller) => seller.id) } },
+      },
+      select: {
+        id: true,
+        productId: true,
+        order: { select: { userId: true } },
+      },
       take: 8,
       orderBy: { createdAt: "asc" },
     });
@@ -659,7 +725,11 @@ async function seedOrdersAndReturns(
       });
 
       if (order.items[0]) {
-        createdOrderItems.push({ id: order.items[0].id, productId: product.id, userId: buyer.id });
+        createdOrderItems.push({
+          id: order.items[0].id,
+          productId: product.id,
+          userId: buyer.id,
+        });
       }
     }
   }
@@ -667,9 +737,7 @@ async function seedOrdersAndReturns(
   return createdOrderItems;
 }
 
-async function seedReturnRequests(
-  orderItems: { id: number; productId: number; userId: number }[],
-) {
+async function seedReturnRequests(orderItems: { id: number; productId: number; userId: number }[]) {
   const existingReturns = await prisma.returnRequest.count();
 
   if (existingReturns > 0) {
@@ -817,11 +885,7 @@ async function seedReturnRequests(
   console.log(`Seeded ${Math.min(returnScenarios.length, orderItems.length)} return requests.`);
 }
 
-async function seedBuyerCommerce(
-  buyers: SeedUser[],
-  sellers: SeedUser[],
-  products: Record<number, { id: number; price: number }[]>,
-) {
+async function seedBuyerCommerce(buyers: SeedUser[], sellers: SeedUser[], products: Record<number, { id: number; price: number }[]>) {
   const allProducts = sellers.flatMap((seller) => products[seller.id] ?? []);
 
   for (const [buyerIndex, buyer] of buyers.entries()) {
@@ -831,10 +895,7 @@ async function seedBuyerCommerce(
       create: { userId: buyer.id },
     });
 
-    const selectedProducts = [
-      allProducts[buyerIndex % allProducts.length],
-      allProducts[(buyerIndex + 3) % allProducts.length],
-    ].filter(Boolean);
+    const selectedProducts = [allProducts[buyerIndex % allProducts.length], allProducts[(buyerIndex + 3) % allProducts.length]].filter(Boolean);
 
     for (const product of selectedProducts) {
       await prisma.cartItem.upsert({
@@ -847,13 +908,17 @@ async function seedBuyerCommerce(
       });
 
       await prisma.wishlistItem.upsert({
-        where: { userId_productId: { userId: buyer.id, productId: product.id } },
+        where: {
+          userId_productId: { userId: buyer.id, productId: product.id },
+        },
         update: {},
         create: { userId: buyer.id, productId: product.id },
       });
 
       await prisma.recentlyView.upsert({
-        where: { userId_productId: { userId: buyer.id, productId: product.id } },
+        where: {
+          userId_productId: { userId: buyer.id, productId: product.id },
+        },
         update: { viewedAt: new Date() },
         create: { userId: buyer.id, productId: product.id },
       });
@@ -867,9 +932,7 @@ async function seedProductReviews(orderItems: { id: number; productId: number; u
     userId: item.userId,
     orderItemId: item.id,
     rating: 5 - (index % 2),
-    review: index % 2 === 0
-      ? "Great quality and exactly as described."
-      : "Nice product, fast delivery, and good packaging.",
+    review: index % 2 === 0 ? "Great quality and exactly as described." : "Nice product, fast delivery, and good packaging.",
   }));
 
   for (const review of reviewInputs) {
@@ -910,7 +973,9 @@ async function seedChats(sellers: SeedUser[], buyers: SeedUser[]) {
       create: { buyerId: buyer.id, sellerId: seller.id },
     });
 
-    const existingMessages = await prisma.chatMessage.count({ where: { chatRoomId: room.id } });
+    const existingMessages = await prisma.chatMessage.count({
+      where: { chatRoomId: room.id },
+    });
     if (existingMessages > 0) {
       continue;
     }
@@ -937,11 +1002,7 @@ async function seedChats(sellers: SeedUser[], buyers: SeedUser[]) {
   }
 }
 
-async function seedNotifications(
-  adminId: number,
-  sellers: SeedUser[],
-  buyers: SeedUser[],
-) {
+async function seedNotifications(adminId: number, sellers: SeedUser[], buyers: SeedUser[]) {
   const targetUsers = [adminId, ...sellers.map((seller) => seller.id), ...buyers.map((buyer) => buyer.id)];
 
   for (const userId of targetUsers) {
@@ -1061,7 +1122,10 @@ async function seedContentAndSupport(buyers: SeedUser[]) {
   };
 
   if (company) {
-    await prisma.companyInfo.update({ where: { id: company.id }, data: companyData });
+    await prisma.companyInfo.update({
+      where: { id: company.id },
+      data: companyData,
+    });
   } else {
     await prisma.companyInfo.create({ data: companyData });
   }
@@ -1092,7 +1156,10 @@ async function seedContentAndSupport(buyers: SeedUser[]) {
     });
 
     if (existing) {
-      await prisma.contactRequest.update({ where: { id: existing.id }, data: request });
+      await prisma.contactRequest.update({
+        where: { id: existing.id },
+        data: request,
+      });
     } else {
       await prisma.contactRequest.create({ data: request });
     }
@@ -1103,7 +1170,10 @@ async function upsertLegalDocument(type: "TERMS_AND_CONDITIONS" | "PRIVACY_POLIC
   const existing = await prisma.legalDocument.findFirst({ where: { type } });
 
   if (existing) {
-    await prisma.legalDocument.update({ where: { id: existing.id }, data: { content } });
+    await prisma.legalDocument.update({
+      where: { id: existing.id },
+      data: { content },
+    });
   } else {
     await prisma.legalDocument.create({ data: { type, content } });
   }
@@ -1149,9 +1219,13 @@ async function seedFaqs() {
   ];
 
   for (const group of faqGroups) {
-    let category = await prisma.faqCategory.findFirst({ where: { name: group.name } });
+    let category = await prisma.faqCategory.findFirst({
+      where: { name: group.name },
+    });
     if (!category) {
-      category = await prisma.faqCategory.create({ data: { name: group.name } });
+      category = await prisma.faqCategory.create({
+        data: { name: group.name },
+      });
     }
 
     for (const faq of group.faqs) {

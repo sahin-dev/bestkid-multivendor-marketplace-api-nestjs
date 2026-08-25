@@ -16,7 +16,8 @@ import {
     CreateBuyNowCheckoutSessionDto,
     CreateStripeCheckoutSessionDto,
 } from "../order/dtos/checkout-flow.dto";
-import { PaymentStatus, SellerTier } from "generated/prisma/client";
+import { CurrencyPreference, PaymentStatus, SellerTier } from "generated/prisma/client";
+import { CurrencyConversionService } from "../currency/currency.service";
 
 type SellerPaymentProfile = {
     id: number;
@@ -40,6 +41,7 @@ export class StripeService {
         private readonly prismaService: PrismaService,
         private readonly orderService: OrderService,
         private readonly paymentService: PaymentService,
+        private readonly currencyService: CurrencyConversionService,
         @Inject(stripeConfig.KEY)
         private readonly stripeConfiguration: ConfigType<typeof StripeConfig>,
     ) {
@@ -85,7 +87,10 @@ export class StripeService {
         const accountLink = await this.createStripeAccountLink(
             accountId,
             refreshUrl ?? `${appBaseUrl}/stripe/onboard`,
-            returnUrl ?? `${appBaseUrl}/stripe/callback`,
+            this.withStripeAccountId(
+                returnUrl ?? `${appBaseUrl}/stripe/callback`,
+                accountId,
+            ),
         );
 
         return { url: accountLink.url, stripe_account_id: accountId };
@@ -121,6 +126,12 @@ export class StripeService {
         } catch (err) {
             this.throwStripeOnboardingError(err, "create onboarding link");
         }
+    }
+
+    private withStripeAccountId(url: string, accountId: string) {
+        const parsedUrl = new URL(url);
+        parsedUrl.searchParams.set("accountId", accountId);
+        return parsedUrl.toString();
     }
 
     private throwStripeOnboardingError(err: unknown, action: string): never {
@@ -195,6 +206,17 @@ export class StripeService {
                 couponCode: dto.couponCode,
             },
         );
+        const checkoutSummaryUsd =
+            await this.orderService.getCheckoutSummaryForPayment(userId, {
+                sellerIds: dto.sellerIds,
+                cartItemIds: dto.cartItemIds,
+                addressId: dto.addressId,
+                country: dto.country,
+                couponCode: dto.couponCode,
+            });
+        const paymentCurrency = this.normalizeStripeCurrency(
+            checkoutSummary.currency ?? (await this.getUserCurrency(userId)),
+        );
         const amountTotal = checkoutSummary.price_details.total;
         const amountInCents = Math.round(amountTotal * 100);
 
@@ -241,6 +263,10 @@ export class StripeService {
             }
 
             const orderAmountCents = Math.round(group.total * 100);
+            const orderTotalUsd =
+                checkoutSummaryUsd.seller_groups.find(
+                    (usdGroup) => usdGroup.seller.id === group.seller.id,
+                )?.total ?? order.total;
             const split = this.calculatePaymentSplit(
                 orderAmountCents,
                 seller.seller_tier,
@@ -252,6 +278,8 @@ export class StripeService {
                 sellerTier: seller.seller_tier,
                 stripeAccountId: seller.stripe_account_id,
                 orderTotal: group.total,
+                orderTotalUsd,
+                currency: paymentCurrency,
                 orderAmountCents,
                 ...split,
             };
@@ -271,7 +299,7 @@ export class StripeService {
             line_items: [
                 {
                     price_data: {
-                        currency: "eur",
+                        currency: paymentCurrency,
                         product_data: {
                             name: "BestKid checkout order",
                             description: `${checkoutSummary.cart_item_count} item(s) from ${checkoutSummary.seller_groups.length} seller(s)`,
@@ -292,6 +320,8 @@ export class StripeService {
                     ? String(orderResult.coupon_id)
                     : "",
                 total: String(amountTotal),
+                totalUsd: String(checkoutSummaryUsd.price_details.total),
+                currency: paymentCurrency,
                 transferGroup,
             },
         });
@@ -300,7 +330,7 @@ export class StripeService {
         await this.paymentService.createPendingTransaction({
             userId,
             amount: amountTotal,
-            currency: "eur",
+            currency: paymentCurrency,
             stripeSessionId: session.id,
             metadata: {
                 checkoutMode: "cart",
@@ -309,13 +339,15 @@ export class StripeService {
                 cartItemIds,
                 transferGroup,
                 cartSplitPlan,
+                totalUsd: checkoutSummaryUsd.price_details.total,
+                currency: paymentCurrency,
             },
         });
 
         return {
             session_id: session.id,
             url: session.url,
-            currency: "eur",
+            currency: paymentCurrency,
             amount_total: amountTotal,
             checkout_summary: checkoutSummary,
             pending_orders: orderResult.orders,
@@ -350,6 +382,11 @@ export class StripeService {
 
         const checkoutSummary =
             await this.orderService.getBuyNowCheckoutSummary(userId, dto);
+        const checkoutSummaryUsd =
+            await this.orderService.getBuyNowCheckoutSummaryForPayment(userId, dto);
+        const paymentCurrency = this.normalizeStripeCurrency(
+            checkoutSummary.currency ?? (await this.getUserCurrency(userId)),
+        );
         const amountTotal = checkoutSummary.price_details.total;
         if (amountTotal === null) {
             throw new BadRequestException(
@@ -422,7 +459,7 @@ export class StripeService {
             line_items: [
                 {
                     price_data: {
-                        currency: "eur",
+                        currency: paymentCurrency,
                         product_data: {
                             name: item.product.name,
                             description: "Buy Now checkout",
@@ -447,6 +484,8 @@ export class StripeService {
                 platformFeePercent: String(platformFeePercent),
                 platformFeeAmount: String(platformFeeAmount / 100),
                 total: String(amountTotal),
+                totalUsd: String(checkoutSummaryUsd.price_details.total),
+                currency: paymentCurrency,
             },
         });
 
@@ -455,7 +494,7 @@ export class StripeService {
             userId,
             orderId,
             amount: amountTotal,
-            currency: "eur",
+            currency: paymentCurrency,
             stripeSessionId: session.id,
             metadata: {
                 checkoutMode: "buy_now",
@@ -467,13 +506,15 @@ export class StripeService {
                     : "",
                 platformFeePercent: String(platformFeePercent),
                 platformFeeAmount: String(platformFeeAmount / 100),
+                totalUsd: checkoutSummaryUsd.price_details.total,
+                currency: paymentCurrency,
             },
         });
 
         return {
             session_id: session.id,
             url: session.url,
-            currency: "eur",
+            currency: paymentCurrency,
             amount_total: amountTotal,
             checkout_summary: checkoutSummary,
             pending_order: orderResult.order,
@@ -611,34 +652,33 @@ export class StripeService {
     /**
      * Called when Stripe redirects back after onboarding. Checks account status.
      */
-    async handleCallback(userId: number) {
-        const user = await this.prismaService.baseUser.findUnique({
-            where: { id: userId },
-        });
+    async handleCallback(userId?: number, accountId?: string) {
+        const trimmedAccountId = accountId?.trim();
+        const user = trimmedAccountId
+            ? await this.prismaService.baseUser.findFirst({
+                  where: { stripe_account_id: trimmedAccountId },
+              })
+            : userId
+              ? await this.prismaService.baseUser.findUnique({
+                    where: { id: userId },
+                })
+              : null;
+
         if (!user) {
-            throw new NotFoundException(`User with ID ${userId} not found`);
+            throw new NotFoundException(
+                trimmedAccountId
+                    ? `User with Stripe account ${trimmedAccountId} not found`
+                    : `User with ID ${userId} not found`,
+            );
         }
         if (!user.stripe_account_id) {
             throw new BadRequestException("No Stripe account linked.");
         }
 
-        const account = await this.stripe.accounts.retrieve(
+        return this.syncStripeAccountStatus(
+            user.id,
             user.stripe_account_id,
         );
-        const isComplete = account.details_submitted;
-
-        await this.prismaService.baseUser.update({
-            where: { id: userId },
-            data: { stripe_onboarding_complete: isComplete },
-        });
-
-        return {
-            stripe_onboarding_complete: isComplete,
-            stripe_account_id: user.stripe_account_id,
-            message: isComplete
-                ? "Stripe onboarding complete!"
-                : "Stripe onboarding not yet complete.",
-        };
     }
 
     /**
@@ -648,6 +688,7 @@ export class StripeService {
         const user = await this.prismaService.baseUser.findUnique({
             where: { id: userId },
             select: {
+                id: true,
                 stripe_account_id: true,
                 stripe_onboarding_complete: true,
             },
@@ -655,11 +696,39 @@ export class StripeService {
         if (!user) {
             throw new NotFoundException(`User with ID ${userId} not found`);
         }
+        if (user.stripe_account_id) {
+            return this.syncStripeAccountStatus(user.id, user.stripe_account_id);
+        }
         return {
             stripe_account_id: user.stripe_account_id ?? null,
             stripe_onboarding_complete:
                 user.stripe_onboarding_complete ?? false,
         };
+    }
+
+    private async syncStripeAccountStatus(userId: number, accountId: string) {
+        const account = await this.stripe.accounts.retrieve(accountId);
+        const isComplete = this.isStripeOnboardingComplete(account);
+
+        await this.prismaService.baseUser.update({
+            where: { id: userId },
+            data: { stripe_onboarding_complete: isComplete },
+        });
+
+        return {
+            stripe_onboarding_complete: isComplete,
+            stripe_account_id: accountId,
+            charges_enabled: account.charges_enabled,
+            payouts_enabled: account.payouts_enabled,
+            details_submitted: account.details_submitted,
+            message: isComplete
+                ? "Stripe onboarding complete!"
+                : "Stripe onboarding not yet complete.",
+        };
+    }
+
+    private isStripeOnboardingComplete(account: Stripe.Account) {
+        return Boolean(account.details_submitted);
     }
 
     /**
@@ -681,15 +750,14 @@ export class StripeService {
 
         if (event.type === "account.updated") {
             const account = event.data.object as Stripe.Account;
-            if (account.details_submitted) {
-                await this.prismaService.baseUser.updateMany({
-                    where: { stripe_account_id: account.id },
-                    data: { stripe_onboarding_complete: true },
-                });
-                this.logger.log(
-                    `Stripe account ${account.id} onboarding completed via webhook.`,
-                );
-            }
+            const isComplete = this.isStripeOnboardingComplete(account);
+            await this.prismaService.baseUser.updateMany({
+                where: { stripe_account_id: account.id },
+                data: { stripe_onboarding_complete: isComplete },
+            });
+            this.logger.log(
+                `Stripe account ${account.id} onboarding status synced via webhook: ${isComplete}.`,
+            );
         }
 
         if (event.type === "checkout.session.completed") {
@@ -855,6 +923,11 @@ export class StripeService {
                 "cart",
                 Number(session.client_reference_id) || 0,
             );
+        const transaction = await this.paymentService.findBySessionId(session.id);
+        const transactionMetadata = this.toMetadataObject(transaction?.metadata);
+        const cartSplitPlan = Array.isArray(transactionMetadata.cartSplitPlan)
+            ? transactionMetadata.cartSplitPlan
+            : [];
         const transfers: any[] = [];
 
         for (const order of orders) {
@@ -867,11 +940,22 @@ export class StripeService {
                 );
             }
 
-            const orderAmountCents = Math.round(order.total * 100);
-            const split = this.calculatePaymentSplit(
-                orderAmountCents,
-                order.seller.seller_tier,
+            const plannedSplit = cartSplitPlan.find(
+                (plan) => Number(plan.orderId) === order.id,
             );
+            const orderAmountCents =
+                Number(plannedSplit?.orderAmountCents) ||
+                Math.round(order.total * 100);
+            const split = plannedSplit
+                ? {
+                      platformFeePercent: Number(plannedSplit.platformFeePercent) || 0,
+                      platformFeeAmount: Number(plannedSplit.platformFeeAmount) || 0,
+                      sellerTransferAmount: Number(plannedSplit.sellerTransferAmount) || 0,
+                  }
+                : this.calculatePaymentSplit(
+                      orderAmountCents,
+                      order.seller.seller_tier,
+                  );
             if (split.sellerTransferAmount <= 0) {
                 continue;
             }
@@ -879,7 +963,7 @@ export class StripeService {
             const transfer = await this.stripe.transfers.create(
                 {
                     amount: split.sellerTransferAmount,
-                    currency: session.currency ?? "eur",
+                    currency: session.currency ?? "usd",
                     destination: order.seller.stripe_account_id,
                     transfer_group: transferGroup,
                     ...(chargeId ? { source_transaction: chargeId } : {}),
@@ -889,6 +973,8 @@ export class StripeService {
                         orderId: String(order.id),
                         sellerId: String(order.sellerId),
                         sellerTier: order.seller.seller_tier,
+                        orderAmount: String(orderAmountCents / 100),
+                        orderAmountUsd: String(plannedSplit?.orderTotalUsd ?? order.total),
                         platformFeePercent: String(split.platformFeePercent),
                         platformFeeAmount: String(
                             split.platformFeeAmount / 100,
@@ -904,6 +990,10 @@ export class StripeService {
                 transferId: transfer.id,
                 amount: split.sellerTransferAmount / 100,
                 amountCents: split.sellerTransferAmount,
+                currency: session.currency ?? "usd",
+                orderAmount: orderAmountCents / 100,
+                orderAmountCents,
+                orderAmountUsd: plannedSplit?.orderTotalUsd ?? order.total,
                 platformFeePercent: split.platformFeePercent,
                 platformFeeAmount: split.platformFeeAmount / 100,
                 platformFeeAmountCents: split.platformFeeAmount,
@@ -956,6 +1046,34 @@ export class StripeService {
 
     private stringFromMetadata(value?: string | null) {
         return value?.trim() || undefined;
+    }
+
+    private async getUserCurrency(userId: number): Promise<CurrencyPreference> {
+        const user = await this.prismaService.baseUser.findUnique({
+            where: { id: userId },
+            select: { currency_preference: true },
+        });
+
+        return user?.currency_preference ?? CurrencyPreference.USD;
+    }
+
+    private normalizeStripeCurrency(currency: CurrencyPreference | string) {
+        return String(currency || CurrencyPreference.USD).toLowerCase();
+    }
+
+    private currencyPreferenceFromStripeCurrency(currency?: string | null): CurrencyPreference {
+        const normalized = String(currency || CurrencyPreference.USD).toUpperCase();
+        return Object.values(CurrencyPreference).includes(normalized as CurrencyPreference)
+            ? (normalized as CurrencyPreference)
+            : CurrencyPreference.USD;
+    }
+
+    private async convertUsdAmount(amount: number, currency: CurrencyPreference) {
+        if (currency === CurrencyPreference.USD) {
+            return Number(amount.toFixed(2));
+        }
+
+        return this.currencyService.convertAsync(amount, CurrencyPreference.USD, currency);
     }
 
     async refundReturnRequestPayment(
@@ -1023,7 +1141,14 @@ export class StripeService {
             };
         }
 
-        const refundAmount = requestedAmount ?? request.orderItem.price;
+        const refundAmountUsd = requestedAmount ?? request.orderItem.price;
+        const refundCurrency = this.currencyPreferenceFromStripeCurrency(
+            transaction.currency,
+        );
+        const refundAmount = await this.convertUsdAmount(
+            refundAmountUsd,
+            refundCurrency,
+        );
         const refundAmountCents = Math.round(refundAmount * 100);
         if (refundAmountCents <= 0) {
             throw new BadRequestException(
@@ -1089,6 +1214,8 @@ export class StripeService {
             transferReversalId,
             amount: refundAmount,
             amountCents: refundAmountCents,
+            amountUsd: refundAmountUsd,
+            currency: transaction.currency,
             createdAt: new Date().toISOString(),
         };
 
@@ -1115,6 +1242,8 @@ export class StripeService {
             stripe_refund_id: refund.id,
             transfer_reversal_id: transferReversalId,
             refund_amount: refundAmount,
+            refund_amount_usd: refundAmountUsd,
+            currency: transaction.currency,
         };
     }
 

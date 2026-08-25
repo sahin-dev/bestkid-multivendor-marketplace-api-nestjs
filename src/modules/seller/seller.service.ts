@@ -1,14 +1,18 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { OrderStatus } from "generated/prisma/client";
+import { CurrencyPreference, OrderStatus } from "generated/prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { SellerEarningsPeriod, SellerEarningsQueryDto } from "./dtos/seller-earnings-query.dto";
+import { CurrencyConversionService } from "../currency/currency.service";
 
 @Injectable()
 export class SellerService {
-    constructor(private readonly prismaService: PrismaService) {}
+    constructor(
+        private readonly prismaService: PrismaService,
+        private readonly currencyService: CurrencyConversionService,
+    ) {}
 
     async getOptions(sellerId: number) {
-        const [customerOrders, returnOrders, deliveryOptions, earningsAggregate] = await Promise.all([
+        const [customerOrders, returnOrders, deliveryOptions, earningsAggregate, userCurrency] = await Promise.all([
             this.prismaService.order.count({ where: { sellerId } }),
             this.prismaService.returnRequest.count({
                 where: { orderItem: { order: { sellerId } } },
@@ -21,13 +25,19 @@ export class SellerService {
                 },
                 _sum: { total: true },
             }),
+            this.getUserCurrency(sellerId),
         ]);
 
         return {
             options: [
                 { key: "customer_orders", label: "Customer Orders", count: customerOrders },
                 { key: "return_orders", label: "Return Orders", count: returnOrders },
-                { key: "earnings", label: "Earnings", amount: earningsAggregate._sum.total ?? 0 },
+                {
+                    key: "earnings",
+                    label: "Earnings",
+                    amount: await this.convertUsdAmount(earningsAggregate._sum.total ?? 0, userCurrency),
+                    currency: userCurrency,
+                },
                 {
                     key: "delivery_options",
                     label: "Delivery Options",
@@ -81,7 +91,7 @@ export class SellerService {
             ...(dateFilter ? { createdAt: dateFilter } : {}),
         };
 
-        const [aggregate, orders, total] = await Promise.all([
+        const [aggregate, orders, total, userCurrency] = await Promise.all([
             this.prismaService.order.aggregate({
                 where,
                 _sum: { total: true },
@@ -103,23 +113,27 @@ export class SellerService {
                 orderBy: { createdAt: "desc" },
             }),
             this.prismaService.order.count({ where }),
+            this.getUserCurrency(sellerId),
         ]);
 
         return {
             period,
-            earnings: aggregate._sum.total ?? 0,
-            payment_history: orders.map((order) => ({
-                order_id: order.id,
-                customer: {
-                    id: order.user.id,
-                    name: order.user.profile?.full_name ?? order.user.email,
-                    avatar_url: order.user.profile?.avatar_url ?? null,
-                },
-                paid_at: order.createdAt,
-                status: order.status,
-                amount: order.total,
-                item_count: order.items.length,
-            })),
+            earnings: await this.convertUsdAmount(aggregate._sum.total ?? 0, userCurrency),
+            currency: userCurrency,
+            payment_history: await Promise.all(
+                orders.map(async (order) => ({
+                    order_id: order.id,
+                    customer: {
+                        id: order.user.id,
+                        name: order.user.profile?.full_name ?? order.user.email,
+                        avatar_url: order.user.profile?.avatar_url ?? null,
+                    },
+                    paid_at: order.createdAt,
+                    status: order.status,
+                    amount: await this.convertUsdAmount(order.total, userCurrency),
+                    item_count: order.items.length,
+                })),
+            ),
             meta: {
                 total,
                 page,
@@ -127,6 +141,23 @@ export class SellerService {
                 pages: Math.ceil(total / limit),
             },
         };
+    }
+
+    private async getUserCurrency(userId: number): Promise<CurrencyPreference> {
+        const user = await this.prismaService.baseUser.findUnique({
+            where: { id: userId },
+            select: { currency_preference: true },
+        });
+
+        return user?.currency_preference ?? CurrencyPreference.USD;
+    }
+
+    private async convertUsdAmount(amount: number, currency: CurrencyPreference) {
+        if (currency === CurrencyPreference.USD) {
+            return Number(amount.toFixed(2));
+        }
+
+        return this.currencyService.convertAsync(amount, CurrencyPreference.USD, currency);
     }
 
     private getDateFilter(period: SellerEarningsPeriod) {

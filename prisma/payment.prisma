@@ -3,7 +3,7 @@ model PaymentTransaction {
   userId    Int
   orderId   Int?
   amount    Float
-  currency  String   @default("eur")
+  currency  String   @default("usd")
   provider  PaymentProvider @default(STRIPE)
   status    PaymentStatus @default(PENDING)
 

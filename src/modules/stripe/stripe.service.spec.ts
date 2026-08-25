@@ -16,6 +16,7 @@ describe("StripeService.handleWebhook", () => {
     createPendingTransaction?: jest.Mock;
     markSucceeded?: jest.Mock;
     linkOrderToSession?: jest.Mock;
+    findBySessionId?: jest.Mock;
   };
   let prismaService: {
     baseUser?: any;
@@ -33,6 +34,7 @@ describe("StripeService.handleWebhook", () => {
     paymentService = {
       markSucceeded: jest.fn().mockResolvedValue({}),
       linkOrderToSession: jest.fn().mockResolvedValue({}),
+      findBySessionId: jest.fn().mockResolvedValue({ id: 1, metadata: {} }),
     };
 
     prismaService = {
@@ -89,6 +91,7 @@ describe("StripeService.handleWebhook", () => {
       prismaService as any,
       orderService as any,
       paymentService as any,
+      { convertAsync: jest.fn(async (amount: number) => amount) } as any,
       {
         stripe_key: "sk_test_123",
         webhook_key: "whsec_test_123",
@@ -262,6 +265,7 @@ describe("StripeService.handleWebhook", () => {
       prismaService as any,
       orderServiceWithDuplicate as any,
       paymentService as any,
+      { convertAsync: jest.fn(async (amount: number) => amount) } as any,
       { stripe_key: "sk_test_123", webhook_key: "whsec_test_123" } as any,
     );
 

@@ -8,13 +8,15 @@ import { PrismaService } from "../prisma/prisma.service";
 import { AddToCartDto } from "./dtos/add-to-cart.dto";
 import { DeliveryService } from "../delivery/delivery.service";
 import { assertEntityExists } from "src/common/validators/entity-exists.validator";
-import { AuthenticationStatus, ProductStatus } from "generated/prisma/client";
+import { AuthenticationStatus, CurrencyPreference, ProductStatus } from "generated/prisma/client";
+import { CurrencyConversionService } from "../currency/currency.service";
 
 @Injectable()
 export class CartService {
     constructor(
         private readonly prismaService: PrismaService,
         private readonly deliveryService: DeliveryService,
+        private readonly currencyService: CurrencyConversionService,
     ) {}
 
     // ─── Get or create the user's cart ──────────────────────────────────────────
@@ -62,31 +64,34 @@ export class CartService {
 
     // ─── Get cart grouped by seller ──────────────────────────────────────────────
     async getCart(userId: number, buyerCountry?: string) {
-        const cart = await this.prismaService.cart.findUnique({
-            where: { userId },
-            include: {
-                cartItems: {
-                    include: {
-                        product: {
-                            include: {
-                                user: {
-                                    select: {
-                                        id: true,
-                                        profile: { select: { full_name: true, avatar_url: true, country: true } },
-                                        delivery_option: true,
+        const [cart, userCurrency] = await Promise.all([
+            this.prismaService.cart.findUnique({
+                where: { userId },
+                include: {
+                    cartItems: {
+                        include: {
+                            product: {
+                                include: {
+                                    user: {
+                                        select: {
+                                            id: true,
+                                            profile: { select: { full_name: true, avatar_url: true, country: true } },
+                                            delivery_option: true,
+                                        },
                                     },
+                                    category: true,
+                                    subCategory: true,
                                 },
-                                category: true,
-                                subCategory: true,
                             },
                         },
                     },
                 },
-            },
-        });
+            }),
+            this.getUserCurrency(userId),
+        ]);
 
         if (!cart || cart.cartItems.length === 0) {
-            return { seller_groups: [], grand_total: 0 };
+            return { seller_groups: [], grand_total: 0, currency: userCurrency };
         }
 
         // Group by seller
@@ -110,13 +115,16 @@ export class CartService {
                 sellerCountry,
             );
 
-            const subtotal = items.reduce((sum, i) => {
+            const subtotalUsd = items.reduce((sum, i) => {
                 const price = i.product.discounted_price ?? i.product.original_price;
                 return sum + price;
             }, 0);
 
-            const deliveryCost = delivery.cost;
-            const groupTotal = subtotal + deliveryCost;
+            const deliveryCostUsd = delivery.cost;
+            const groupTotalUsd = subtotalUsd + deliveryCostUsd;
+            const subtotal = await this.convertUsdAmount(subtotalUsd, userCurrency);
+            const deliveryCost = await this.convertUsdAmount(deliveryCostUsd, userCurrency);
+            const groupTotal = await this.convertUsdAmount(groupTotalUsd, userCurrency);
             grandTotal += groupTotal;
 
             sellerGroups.push({
@@ -128,26 +136,28 @@ export class CartService {
                     days_min: delivery.days_min,
                     days_max: delivery.days_max,
                 },
-                items: items.map((i) => ({
-                    id: i.id,
-                    productId: i.productId,
-                    price: i.product.discounted_price ?? i.product.original_price,
-                    product: {
-                        id: i.product.id,
-                        name: i.product.name,
-                        image_urls: i.product.image_urls,
-                        category:i.product.category,
-                        sub_category:i.product.subCategory,
-                        status: i.product.status,
-                    },
-                })),
+                items: await Promise.all(
+                    items.map(async (i) => ({
+                        id: i.id,
+                        productId: i.productId,
+                        price: await this.convertUsdAmount(i.product.discounted_price ?? i.product.original_price, userCurrency),
+                        product: {
+                            id: i.product.id,
+                            name: i.product.name,
+                            image_urls: i.product.image_urls,
+                            category:i.product.category,
+                            sub_category:i.product.subCategory,
+                            status: i.product.status,
+                        },
+                    })),
+                ),
                 subtotal,
                 delivery_cost: deliveryCost,
                 group_total: groupTotal,
             });
         }
 
-        return { seller_groups: sellerGroups, grand_total: grandTotal };
+        return { seller_groups: sellerGroups, grand_total: grandTotal, currency: userCurrency };
     }
 
     // ─── Remove item ─────────────────────────────────────────────────────────────
@@ -169,5 +179,22 @@ export class CartService {
         if (!cart) return { message: "Cart is already empty" };
         await this.prismaService.cartItem.deleteMany({ where: { cartId: cart.id } });
         return { message: "Cart cleared" };
+    }
+
+    private async getUserCurrency(userId: number): Promise<CurrencyPreference> {
+        const user = await this.prismaService.baseUser.findUnique({
+            where: { id: userId },
+            select: { currency_preference: true },
+        });
+
+        return user?.currency_preference ?? CurrencyPreference.USD;
+    }
+
+    private async convertUsdAmount(amount: number, currency: CurrencyPreference) {
+        if (currency === CurrencyPreference.USD) {
+            return Number(amount.toFixed(2));
+        }
+
+        return this.currencyService.convertAsync(amount, CurrencyPreference.USD, currency);
     }
 }

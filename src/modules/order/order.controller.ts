@@ -56,7 +56,7 @@ export class OrderController {
     }
 
     @Post("checkout/apply-coupon")
-    @ApiOperation({ summary: "Apply coupon to checkout", description: "Validates a buyer-entered coupon code against the current cart. Address and country are collected during final checkout." })
+    @ApiOperation({ summary: "Apply coupon to checkout", description: "Validates a buyer-entered coupon code against the current cart, or against a direct Buy Now product when productId is provided." })
     @ApiBody({ type: ApplyCouponDto })
     @ApiResponse({ status: 200, description: "Coupon applied; returns discount and recalculated totals" })
     async applyCoupon(@GetUser("id") userId: number, @Body() dto: ApplyCouponDto) {

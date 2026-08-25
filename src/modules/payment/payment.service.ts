@@ -23,7 +23,7 @@ export class PaymentService {
         userId: params.userId,
         orderId: params.orderId,
         amount: params.amount,
-        currency: params.currency ?? "eur",
+        currency: params.currency ?? "usd",
         provider: PaymentProvider.STRIPE,
         status: PaymentStatus.PENDING,
         stripe_session_id: params.stripeSessionId,

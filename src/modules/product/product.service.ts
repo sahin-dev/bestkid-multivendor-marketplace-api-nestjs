@@ -282,6 +282,7 @@ export class ProductService {
         if (andFilters.length > 0) {
             whereClause.AND = andFilters;
         }
+        this.requireSellerPaymentSetup(whereClause);
         this.excludeViewerProducts(whereClause, userId);
 
         const orderBy = this.getProductOrderBy(sort);
@@ -372,6 +373,9 @@ export class ProductService {
 
         const isOwner = userId !== undefined && product.userId === userId;
         if (product.status !== ProductStatus.ACTIVE && !isOwner && !isAdmin) {
+            throw new NotFoundException(`Product with ID ${id} not found`);
+        }
+        if (!isOwner && !isAdmin && !this.hasSellerPaymentSetup(product.user)) {
             throw new NotFoundException(`Product with ID ${id} not found`);
         }
 
@@ -800,6 +804,14 @@ export class ProductService {
         product: T,
         currency: CurrencyPreference,
     ) {
+        if (currency === CurrencyPreference.USD) {
+            return {
+                ...product,
+                effective_price: product.discounted_price ?? product.original_price,
+                currency,
+            };
+        }
+
         const baseCurrency = CurrencyPreference.USD;
         const originalPrice = await this.currencyService.convertPrice(product.original_price, baseCurrency, currency);
         const discountedPrice = await this.currencyService.convertPrice(product.discounted_price ?? null, baseCurrency, currency);
@@ -809,6 +821,7 @@ export class ProductService {
             original_price: originalPrice ?? 0,
             discounted_price: discountedPrice,
             effective_price: discountedPrice ?? originalPrice ?? 0,
+            currency,
         };
     }
 
@@ -862,7 +875,13 @@ export class ProductService {
 
     private async getSellerStats(sellerId: number) {
         const [productCount, orderItemCount, ratingAggregate] = await Promise.all([
-            this.prismaService.product.count({ where: { userId: sellerId, status: "ACTIVE" } }),
+            this.prismaService.product.count({
+                where: {
+                    userId: sellerId,
+                    status: "ACTIVE",
+                    user: this.getSellerPaymentSetupWhere(),
+                },
+            }),
             this.prismaService.orderItem.count({
                 where: {
                     order: {
@@ -899,6 +918,7 @@ export class ProductService {
                 id: { not: productId },
                 categoryId,
                 status: "ACTIVE",
+                user: this.getSellerPaymentSetupWhere(),
                 ...(userId ? { userId: { not: userId } } : {}),
             },
             take: 4,
@@ -957,6 +977,24 @@ export class ProductService {
               : [];
 
         whereClause.AND = [...existingAnd, { userId: { not: userId } }];
+    }
+
+    private requireSellerPaymentSetup(whereClause: any) {
+        whereClause.user = this.getSellerPaymentSetupWhere();
+    }
+
+    private getSellerPaymentSetupWhere() {
+        return {
+            stripe_onboarding_complete: true,
+            stripe_account_id: { not: null },
+        };
+    }
+
+    private hasSellerPaymentSetup(seller?: {
+        stripe_onboarding_complete?: boolean | null;
+        stripe_account_id?: string | null;
+    } | null) {
+        return Boolean(seller?.stripe_onboarding_complete && seller.stripe_account_id);
     }
 
     private assertReviewTextWithinWordLimit(review?: string) {

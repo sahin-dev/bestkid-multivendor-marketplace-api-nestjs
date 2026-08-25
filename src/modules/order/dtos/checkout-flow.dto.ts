@@ -63,6 +63,43 @@ export class ApplyCouponDto {
     @IsNotEmpty()
     @ApiProperty({ description: "Coupon code entered by the buyer", example: "KIDS20" })
     couponCode: string;
+
+    @Type(() => Number)
+    @IsInt()
+    @IsOptional()
+    @ApiPropertyOptional({ description: "Product ID when applying a coupon from direct Buy Now checkout" })
+    productId?: number;
+
+    @Transform(({ value }) => toNumberArray(value))
+    @IsArray()
+    @IsInt({ each: true })
+    @IsOptional()
+    @ApiPropertyOptional({
+        type: [Number],
+        description: "Selected seller IDs when applying a coupon to a cart checkout subset.",
+    })
+    sellerIds?: number[];
+
+    @Transform(({ value }) => toNumberArray(value))
+    @IsArray()
+    @IsInt({ each: true })
+    @IsOptional()
+    @ApiPropertyOptional({
+        type: [Number],
+        description: "Selected cart item IDs when applying a coupon to a cart checkout subset.",
+    })
+    cartItemIds?: number[];
+
+    @Type(() => Number)
+    @IsInt()
+    @IsOptional()
+    @ApiPropertyOptional({ description: "Saved address ID selected on checkout page" })
+    addressId?: number;
+
+    @IsString()
+    @IsOptional()
+    @ApiPropertyOptional({ description: "Destination country when no saved address is selected" })
+    country?: string;
 }
 
 export class CreateStripeCheckoutSessionDto {

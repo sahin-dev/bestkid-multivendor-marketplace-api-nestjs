@@ -5,11 +5,16 @@ import { BuyerOrderTab, OrderQueryDto, SellerOrderTab } from "./dtos/order-query
 import { CheckoutDto } from "./dtos/checkout.dto";
 import { ApplyCouponDto, BuyNowCheckoutSummaryDto, CheckoutSummaryQueryDto, CreateBuyNowCheckoutSessionDto } from "./dtos/checkout-flow.dto";
 import { DeliveryService } from "../delivery/delivery.service";
-import { AuthenticationStatus, CouponDiscountType, CouponUsageType, OrderCancellationActor, OrderStatus, ProductStatus, NotificationType, Prisma } from "generated/prisma/client";
+import { AuthenticationStatus, CouponDiscountType, CouponUsageType, CurrencyPreference, OrderCancellationActor, OrderStatus, ProductStatus, NotificationType, Prisma } from "generated/prisma/client";
 import { NotificationService } from "../notification/notification.service";
 import { CreateReviewDto } from "../product/dtos/create-review.dto";
 import { ChatService } from "../chat/chat.service";
 import { assertEntityExists } from "src/common/validators/entity-exists.validator";
+import { CurrencyConversionService } from "../currency/currency.service";
+
+type CurrencyFormattingOptions = {
+    convertCurrency?: boolean;
+};
 
 @Injectable()
 export class OrderService {
@@ -18,6 +23,7 @@ export class OrderService {
         private readonly deliveryService: DeliveryService,
         private readonly notificationService: NotificationService,
         private readonly chatService: ChatService,
+        private readonly currencyService: CurrencyConversionService,
     ) {}
 
     async createOrder(userId: number, dto: CreateOrderDto) {
@@ -92,13 +98,33 @@ export class OrderService {
         });
     }
 
-    async getCheckoutSummary(userId: number, dto: CheckoutSummaryQueryDto = {}) {
+    async getCheckoutSummary(
+        userId: number,
+        dto: CheckoutSummaryQueryDto = {},
+        options: CurrencyFormattingOptions = {},
+    ) {
+        const { cart_id, ...summary } = await this.buildCheckoutSummary(userId, dto);
+        if (options.convertCurrency === false) {
+            return summary;
+        }
+
+        return this.applyCheckoutSummaryCurrency(summary, await this.getUserCurrency(userId));
+    }
+
+    async getCheckoutSummaryForPayment(userId: number, dto: CheckoutSummaryQueryDto = {}) {
         const { cart_id, ...summary } = await this.buildCheckoutSummary(userId, dto);
         return summary;
     }
 
     async applyCoupon(userId: number, dto: ApplyCouponDto) {
-        const { cart_id, ...summary } = await this.buildCheckoutSummary(userId, dto);
+        const summary = dto.productId
+            ? await this.getBuyNowCheckoutSummary(userId, {
+                  productId: dto.productId,
+                  addressId: dto.addressId,
+                  country: dto.country,
+                  couponCode: dto.couponCode,
+              })
+            : await this.getCheckoutSummary(userId, dto);
         return {
             valid: true,
             message: summary.coupon?.message ?? "Coupon applied successfully.",
@@ -191,6 +217,11 @@ export class OrderService {
     }
 
     async getBuyNowCheckoutSummary(userId: number, dto: BuyNowCheckoutSummaryDto) {
+        const summary = await this.buildBuyNowCheckoutSummary(userId, dto);
+        return this.applyCheckoutSummaryCurrency(summary, await this.getUserCurrency(userId));
+    }
+
+    async getBuyNowCheckoutSummaryForPayment(userId: number, dto: BuyNowCheckoutSummaryDto) {
         return this.buildBuyNowCheckoutSummary(userId, dto);
     }
 
@@ -335,8 +366,10 @@ export class OrderService {
             this.prismaService.order.count({ where: whereClause }),
         ]);
 
+        const userCurrency = await this.getUserCurrency(userId);
+
         return {
-            data: data.map((order) => this.formatOrderCard(order)),
+            data: await Promise.all(data.map((order) => this.formatOrderCard(order, userCurrency))),
             meta: {
                 total,
                 page,
@@ -383,8 +416,10 @@ export class OrderService {
             this.prismaService.order.count({ where: whereClause }),
         ]);
 
+        const userCurrency = await this.getUserCurrency(sellerId);
+
         return {
-            data: data.map((order) => this.formatSellerOrderCard(order)),
+            data: await Promise.all(data.map((order) => this.formatSellerOrderCard(order, userCurrency))),
             meta: {
                 total,
                 page,
@@ -447,8 +482,10 @@ export class OrderService {
             this.prismaService.order.count({ where: whereClause }),
         ]);
 
+        const userCurrency = await this.getUserCurrency(sellerId);
+
         return {
-            data: data.map((order) => this.formatSellerOrderCardForProduct(order, productId)),
+            data: await Promise.all(data.map((order) => this.formatSellerOrderCardForProduct(order, productId, userCurrency))),
             meta: {
                 total,
                 page,
@@ -472,7 +509,8 @@ export class OrderService {
             throw new ForbiddenException("You do not have permission to access this order");
         }
 
-        return this.formatOrderDetail(order);
+        const currency = userId ? await this.getUserCurrency(userId) : CurrencyPreference.USD;
+        return this.formatOrderDetail(order, currency);
     }
 
     async findSellerOrderById(orderId: number, sellerId: number) {
@@ -489,7 +527,7 @@ export class OrderService {
             throw new ForbiddenException("You do not have permission to access this order");
         }
 
-        return this.formatSellerOrderDetail(order);
+        return this.formatSellerOrderDetail(order, await this.getUserCurrency(sellerId));
     }
 
     async findOrCreateOrderChat(orderId: number, userId: number) {
@@ -541,7 +579,7 @@ export class OrderService {
             console.error("Failed to send cancellation notification", e);
         }
 
-        return this.formatOrderDetail(updated);
+        return this.formatOrderDetail(updated, await this.getUserCurrency(userId));
     }
 
     async reviewOrderItem(userId: number, orderItemId: number, dto: CreateReviewDto) {
@@ -674,7 +712,7 @@ export class OrderService {
             console.error("Failed to send status update notification", e);
         }
 
-        return this.formatSellerOrderDetail(updated);
+        return this.formatSellerOrderDetail(updated, await this.getUserCurrency(sellerId));
     }
 
     async findAllOrdersAdmin(query: OrderQueryDto) {
@@ -1157,7 +1195,7 @@ export class OrderService {
             message:
                 coupon.discount_type === CouponDiscountType.PERCENTAGE
                     ? `${coupon.discount_value}% discount applied to your order.`
-                    : `EUR ${coupon.discount_value} discount applied to your order.`,
+                    : `${coupon.discount_value} discount applied to your order.`,
         };
     }
 
@@ -1214,6 +1252,88 @@ export class OrderService {
 
     private roundMoney(value: number) {
         return Math.round((value + Number.EPSILON) * 100) / 100;
+    }
+
+    private async getUserCurrency(userId: number): Promise<CurrencyPreference> {
+        const user = await this.prismaService.baseUser.findUnique({
+            where: { id: userId },
+            select: { currency_preference: true },
+        });
+
+        return user?.currency_preference ?? CurrencyPreference.USD;
+    }
+
+    private async convertUsdAmount(amount: number | null | undefined, currency: CurrencyPreference) {
+        if (amount === null || amount === undefined) {
+            return amount;
+        }
+
+        if (currency === CurrencyPreference.USD) {
+            return this.roundMoney(amount);
+        }
+
+        return this.currencyService.convertAsync(amount, CurrencyPreference.USD, currency);
+    }
+
+    private async applyCheckoutSummaryCurrency(summary: any, currency: CurrencyPreference) {
+        if (currency === CurrencyPreference.USD) {
+            return {
+                ...summary,
+                currency,
+                base_currency: CurrencyPreference.USD,
+            };
+        }
+
+        const sellerGroups = await Promise.all(
+            summary.seller_groups.map(async (group: any) => {
+                const deliveryCost = await this.convertUsdAmount(group.delivery?.cost, currency);
+                const items = await Promise.all(
+                    group.items.map(async (item: any) => {
+                        const price = await this.convertUsdAmount(item.price, currency);
+                        return {
+                            ...item,
+                            price,
+                            line_total: await this.convertUsdAmount(item.line_total, currency),
+                        };
+                    }),
+                );
+
+                return {
+                    ...group,
+                    delivery: group.delivery
+                        ? {
+                              ...group.delivery,
+                              cost: deliveryCost,
+                          }
+                        : group.delivery,
+                    items,
+                    subtotal: await this.convertUsdAmount(group.subtotal, currency),
+                    delivery_cost: await this.convertUsdAmount(group.delivery_cost, currency),
+                    discount_amount: await this.convertUsdAmount(group.discount_amount, currency),
+                    total: await this.convertUsdAmount(group.total, currency),
+                };
+            }),
+        );
+
+        return {
+            ...summary,
+            seller_groups: sellerGroups,
+            coupon: summary.coupon
+                ? {
+                      ...summary.coupon,
+                      discount_amount: await this.convertUsdAmount(summary.coupon.discount_amount, currency),
+                  }
+                : null,
+            price_details: {
+                ...summary.price_details,
+                subtotal: await this.convertUsdAmount(summary.price_details?.subtotal, currency),
+                shipping_fee: await this.convertUsdAmount(summary.price_details?.shipping_fee, currency),
+                discount: await this.convertUsdAmount(summary.price_details?.discount, currency),
+                total: await this.convertUsdAmount(summary.price_details?.total, currency),
+            },
+            currency,
+            base_currency: CurrencyPreference.USD,
+        };
     }
 
     /**
@@ -1517,7 +1637,7 @@ export class OrderService {
         };
     }
 
-    private formatOrderCard(order: any) {
+    private async formatOrderCard(order: any, currency: CurrencyPreference) {
         return {
             id: order.id,
             display_id: this.getDisplayOrderId(order.id),
@@ -1525,16 +1645,19 @@ export class OrderService {
             status_label: this.getStatusLabel(order.status),
             status_tone: this.getStatusTone(order.status),
             createdAt: order.createdAt,
-            total: order.total,
+            total: await this.convertUsdAmount(order.total, currency),
+            currency,
             item_count: order.items.length,
             seller: order.seller,
-            preview_items: order.items.slice(0, 2).map((item: any) => ({
-                id: item.id,
-                productId: item.productId,
-                name: item.product?.name,
-                image_url: item.product?.image_urls?.[0] ?? null,
-                price: item.price,
-            })),
+            preview_items: await Promise.all(
+                order.items.slice(0, 2).map(async (item: any) => ({
+                    id: item.id,
+                    productId: item.productId,
+                    name: item.product?.name,
+                    image_url: item.product?.image_urls?.[0] ?? null,
+                    price: await this.convertUsdAmount(item.price, currency),
+                })),
+            ),
             actions: {
                 can_view_details: true,
                 can_cancel: this.canCancelOrder(order.status),
@@ -1542,7 +1665,7 @@ export class OrderService {
         };
     }
 
-    private formatSellerOrderCard(order: any) {
+    private async formatSellerOrderCard(order: any, currency: CurrencyPreference) {
         return {
             id: order.id,
             display_id: this.getDisplayOrderId(order.id),
@@ -1550,16 +1673,19 @@ export class OrderService {
             status_label: this.getStatusLabel(order.status),
             status_tone: this.getStatusTone(order.status),
             createdAt: order.createdAt,
-            total: order.total,
+            total: await this.convertUsdAmount(order.total, currency),
+            currency,
             item_count: order.items.length,
             buyer: order.user,
-            preview_items: order.items.slice(0, 2).map((item: any) => ({
-                id: item.id,
-                productId: item.productId,
-                name: item.product?.name,
-                image_url: item.product?.image_urls?.[0] ?? null,
-                price: item.price,
-            })),
+            preview_items: await Promise.all(
+                order.items.slice(0, 2).map(async (item: any) => ({
+                    id: item.id,
+                    productId: item.productId,
+                    name: item.product?.name,
+                    image_url: item.product?.image_urls?.[0] ?? null,
+                    price: await this.convertUsdAmount(item.price, currency),
+                })),
+            ),
             cancellation: this.getCancellationSummary(order),
             timeline: this.getTimelineSummary(order),
             actions: {
@@ -1569,24 +1695,26 @@ export class OrderService {
         };
     }
 
-    private formatSellerOrderCardForProduct(order: any, productId: number) {
+    private async formatSellerOrderCardForProduct(order: any, productId: number, currency: CurrencyPreference) {
         const matchedItems = order.items.filter((item: any) => item.productId === productId);
 
         return {
-            ...this.formatSellerOrderCard(order),
-            matched_product_items: matchedItems.map((item: any) => ({
-                id: item.id,
-                productId: item.productId,
-                name: item.product?.name,
-                image_url: item.product?.image_urls?.[0] ?? null,
-                price: item.price,
-                line_total: item.price,
-            })),
+            ...(await this.formatSellerOrderCard(order, currency)),
+            matched_product_items: await Promise.all(
+                matchedItems.map(async (item: any) => ({
+                    id: item.id,
+                    productId: item.productId,
+                    name: item.product?.name,
+                    image_url: item.product?.image_urls?.[0] ?? null,
+                    price: await this.convertUsdAmount(item.price, currency),
+                    line_total: await this.convertUsdAmount(item.price, currency),
+                })),
+            ),
             matched_item_count: matchedItems.length,
         };
     }
 
-    private formatOrderDetail(order: any) {
+    private async formatOrderDetail(order: any, currency: CurrencyPreference) {
         return {
             id: order.id,
             display_id: this.getDisplayOrderId(order.id),
@@ -1595,10 +1723,11 @@ export class OrderService {
             status_tone: this.getStatusTone(order.status),
             createdAt: order.createdAt,
             updatedAt: order.updatedAt,
-            total: order.total,
+            total: await this.convertUsdAmount(order.total, currency),
+            currency,
             delivery: {
                 partner: order.delivery_partner,
-                cost: order.delivery_cost,
+                cost: await this.convertUsdAmount(order.delivery_cost ?? 0, currency),
                 days_min: order.delivery_days_min,
                 days_max: order.delivery_days_max,
             },
@@ -1615,14 +1744,14 @@ export class OrderService {
             actions: {
                 can_cancel: this.canCancelOrder(order.status),
             },
-            items: order.items.map((item: any) => this.formatOrderItem(item, order.status)),
+            items: await Promise.all(order.items.map((item: any) => this.formatOrderItem(item, order.status, currency))),
         };
     }
 
-    private async formatSellerOrderDetail(order: any) {
+    private async formatSellerOrderDetail(order: any, currency: CurrencyPreference) {
         const chatRoomId = await this.getExistingChatRoomId(order.userId, order.sellerId);
         return {
-            ...this.formatOrderDetail(order),
+            ...(await this.formatOrderDetail(order, currency)),
             chat_room_id: chatRoomId,
             ordered_by: order.user,
             actions: {
@@ -1639,13 +1768,14 @@ export class OrderService {
         };
     }
 
-    private formatOrderItem(item: any, orderStatus: OrderStatus) {
+    private async formatOrderItem(item: any, orderStatus: OrderStatus, currency: CurrencyPreference) {
         const latestReturn = item.returnRequests?.[0] ?? null;
+        const price = await this.convertUsdAmount(item.price, currency);
         return {
             id: item.id,
             productId: item.productId,
-            price: item.price,
-            line_total: item.price,
+            price,
+            line_total: price,
             product: item.product
                 ? {
                       id: item.product.id,

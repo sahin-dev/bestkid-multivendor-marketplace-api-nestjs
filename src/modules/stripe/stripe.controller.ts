@@ -52,9 +52,13 @@ export class StripeController {
     }
 
     @Get("callback")
+    @Public()
     @ApiOperation({ summary: "Stripe redirect callback after onboarding - updates onboarding status" })
-    async callback(@GetUser("id") userId: number) {
-        return this.stripeService.handleCallback(userId);
+    async callback(
+        @GetUser("id") userId: number | undefined,
+        @Query("accountId") accountId?: string,
+    ) {
+        return this.stripeService.handleCallback(userId, accountId);
     }
 
     @Post("webhook")
