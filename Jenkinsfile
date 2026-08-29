@@ -136,13 +136,14 @@ pipeline {
             $releaseId = "$env:BUILD_NUMBER-$env:GIT_COMMIT"
             $remoteTarball = "/tmp/bestkid-$releaseId.tar.gz"
             $remoteTarget = "$($env:EC2_USER)@$($env:EC2_HOST):$remoteTarball"
-            $deployKey = Join-Path $env:WORKSPACE '.jenkins-deploy-key'
+            $safeBuildTag = $env:BUILD_TAG -replace '[^A-Za-z0-9_.-]', '-'
+            $deployKey = Join-Path ([System.IO.Path]::GetTempPath()) "jenkins-deploy-key-$safeBuildTag"
 
             try {
             Copy-Item -LiteralPath "$env:SSH_KEY" -Destination "$deployKey" -Force
-            $keyUser = "$($env:USERDOMAIN)\$($env:USERNAME)"
+            $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
             icacls.exe "$deployKey" /inheritance:r | Out-Null
-            icacls.exe "$deployKey" /grant:r "${keyUser}:R" | Out-Null
+            icacls.exe "$deployKey" /grant:r "*${currentSid}:R" | Out-Null
 
             scp -i "$deployKey" -P "$env:EC2_PORT" -o StrictHostKeyChecking=accept-new release.tar.gz "$remoteTarget"
             if ($LASTEXITCODE -ne 0) {
