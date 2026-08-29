@@ -37,19 +37,31 @@ export class AuthService {
         }
 
         const user = await this.userService.saveUser(registerUserDto)
-        const createdOtp = await this.otpService.create(user.id, OtpPurpose.EMAIL_VERIFICATION, new Date(Date.now() + 15 * 60 * 1000))
-        try {
-            this.sendEmailVerificationEmail(user.profile?.full_name ?? user.email, user.email, createdOtp.otp)
-        } catch (err) {
-            this.logger.error(err)
-            this.logger.log("sending verification email failed!")
-        }
+        const createdOtp = await this.createEmailVerificationOtp(user)
 
         return { user, email_verification_id: createdOtp.requestId }
     }
 
     async login(singinDto: SigninDto): Promise<string | Record<string, any>> {
         const tokenOrUser = await this.authProvider.authenticate(singinDto.email, singinDto.password)
+
+        if (this.isEmailUnverifiedPayload(tokenOrUser)) {
+            const user = await this.userService.getUserByEmail(singinDto.email)
+            if (!user) {
+                throw new NotFoundException("User not found!")
+            }
+
+            const createdOtp = await this.createEmailVerificationOtp(user)
+            return { ...tokenOrUser, email_verification_id: createdOtp.requestId }
+        }
+
+        if (typeof tokenOrUser === "string" && singinDto.fcmToken) {
+            const user = await this.userService.getUserByEmail(singinDto.email)
+            if (user) {
+                await this.userService.updateFcmToken(user.id, singinDto.fcmToken)
+            }
+        }
+
         return tokenOrUser
     }
 
@@ -79,6 +91,10 @@ export class AuthService {
             email: user.email,
         })
 
+        if (signinDto.fcmToken) {
+            await this.userService.updateFcmToken(user.id, signinDto.fcmToken)
+        }
+
         return {
             access_token: token,
             user: {
@@ -95,13 +111,7 @@ export class AuthService {
         if (!user) {
             throw new NotFoundException("User not found!")
         }
-        const createdOtp = await this.otpService.create(user.id, OtpPurpose.EMAIL_VERIFICATION, new Date(Date.now() + 15 * 60 * 1000))
-        try {
-            this.sendEmailVerificationEmail(user.profile?.full_name ?? user.email, user.email, createdOtp.otp)
-        } catch (err) {
-            this.logger.error(err)
-            this.logger.log("sending verification email failed!")
-        }
+        const createdOtp = await this.createEmailVerificationOtp(user)
         return { email_verification_id: createdOtp.requestId }
     }
 
@@ -110,7 +120,14 @@ export class AuthService {
         const otpVerification = await this.otpService.verifyOtp(verifyOtpDto.requestId, verifyOtpDto.otp)
 
         if (otpVerification?.purpose === OtpPurpose.EMAIL_VERIFICATION && otpVerification?.userId) {
-            await this.userService.emailVerified(otpVerification.userId)
+            const user = await this.userService.emailVerified(otpVerification.userId)
+            const accessToken = this.authProvider.signToken({
+                id: user.id,
+                role: user.role,
+                email: user.email,
+            })
+
+            return { ...otpVerification, access_token: accessToken }
         }
 
         return otpVerification
@@ -195,6 +212,27 @@ export class AuthService {
 
     private async sendEmailVerificationEmail(username: string, email: string, otp: string) {
         this.smtpProvider.sendMail(email, "Email Verification", otpEmailTemplate({ appname: "BestKid", name: username, otp }))
+    }
+
+    private async createEmailVerificationOtp(user: { id: number; email: string; profile?: { full_name?: string | null } | null }) {
+        const createdOtp = await this.otpService.create(
+            user.id,
+            OtpPurpose.EMAIL_VERIFICATION,
+            new Date(Date.now() + 15 * 60 * 1000),
+        )
+
+        try {
+            this.sendEmailVerificationEmail(user.profile?.full_name ?? user.email, user.email, createdOtp.otp)
+        } catch (err) {
+            this.logger.error(err)
+            this.logger.log("sending verification email failed!")
+        }
+
+        return createdOtp
+    }
+
+    private isEmailUnverifiedPayload(value: string | Record<string, any>): value is { email_unverified: true } {
+        return typeof value !== "string" && value?.email_unverified === true
     }
 
     private async sendResetPasswordOtp(email: string) {

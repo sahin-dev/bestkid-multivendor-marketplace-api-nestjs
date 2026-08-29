@@ -5,6 +5,10 @@ import { AuthenticationStatus } from "generated/prisma/client";
 export class UpdateProductAuthStatusDto {
     @IsEnum(AuthenticationStatus)
     @IsNotEmpty()
-    @ApiProperty({ enum: AuthenticationStatus, description: "Authentication status of the product" })
+    @ApiProperty({
+        enum: AuthenticationStatus,
+        example: AuthenticationStatus.VERIFIED,
+        description: "Authentication status of the product",
+    })
     status: AuthenticationStatus;
 }

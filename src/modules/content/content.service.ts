@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { CreateFaqCategoryDto } from "./dtos/create-faq-category.dto";
 import { CreateFaqDto } from "./dtos/create-faq.dto";
 import { UpdateFaqDto } from "./dtos/update-faq.dto";
+import { UpsertAboutUsDto } from "./dtos/upsert-about-us.dto";
 import { UpsertLegalDto } from "./dtos/upsert-legal.dto";
 import { UpsertCompanyInfoDto } from "./dtos/upsert-company-info.dto";
 import { CreateContactRequestDto } from "./dtos/create-contact-request.dto";
@@ -133,7 +134,28 @@ export class ContentService {
         return this.prismaService.companyInfo.create({ data: { ...dto } });
     }
 
-    // ─── Contact Requests ─────────────────────────────────────────────────────────
+    // About Us
+
+    async getAboutUs() {
+        const aboutUs = await this.prismaService.aboutUs.findFirst();
+        if (!aboutUs) {
+            throw new NotFoundException("About us content not set yet");
+        }
+        return aboutUs;
+    }
+
+    async upsertAboutUs(dto: UpsertAboutUsDto) {
+        const existing = await this.prismaService.aboutUs.findFirst();
+        if (existing) {
+            return this.prismaService.aboutUs.update({
+                where: { id: existing.id },
+                data: { content: dto.content },
+            });
+        }
+        return this.prismaService.aboutUs.create({ data: { content: dto.content } });
+    }
+
+    // Contact Requests
 
     async submitContactRequest(dto: CreateContactRequestDto) {
         return this.prismaService.contactRequest.create({ data: { ...dto, status: ContactStatus.TO_DO } });

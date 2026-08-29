@@ -15,6 +15,7 @@ import { ApiBearerAuth, ApiBody, ApiOperation, ApiQuery, ApiTags } from "@nestjs
 import { GetUser, Public, Roles } from "src/common/decorators";
 import { StripeService } from "./stripe.service";
 import { OnboardSellerDto } from "./dtos/onboard-seller.dto";
+import { CreateBuyNowCheckoutSessionDto, CreateStripeCheckoutSessionDto } from "../order/dtos/checkout-flow.dto";
 import type { Request } from "express";
 
 @ApiTags("Stripe")
@@ -30,6 +31,20 @@ export class StripeController {
         return this.stripeService.onboardSeller(userId, dto.returnUrl, dto.refreshUrl);
     }
 
+    @Post("checkout-session")
+    @ApiOperation({ summary: "Create buyer Stripe checkout session", description: "Creates a hosted Stripe Checkout payment session from the authenticated buyer's current cart, selected address, and optional coupon." })
+    @ApiBody({ type: CreateStripeCheckoutSessionDto })
+    async createCheckoutSession(@GetUser("id") userId: number, @Body() dto: CreateStripeCheckoutSessionDto) {
+        return this.stripeService.createCheckoutSession(userId, dto);
+    }
+
+    @Post("buy-now-session")
+    @ApiOperation({ summary: "Create direct Buy Now Stripe checkout session", description: "Creates a hosted Stripe Checkout payment session for one product from the product details page without adding it to cart." })
+    @ApiBody({ type: CreateBuyNowCheckoutSessionDto })
+    async createBuyNowCheckoutSession(@GetUser("id") userId: number, @Body() dto: CreateBuyNowCheckoutSessionDto) {
+        return this.stripeService.createBuyNowCheckoutSession(userId, dto);
+    }
+
     @Get("status")
     @ApiOperation({ summary: "Get current Stripe onboarding status" })
     async getStatus(@GetUser("id") userId: number) {
@@ -37,9 +52,13 @@ export class StripeController {
     }
 
     @Get("callback")
+    @Public()
     @ApiOperation({ summary: "Stripe redirect callback after onboarding - updates onboarding status" })
-    async callback(@GetUser("id") userId: number) {
-        return this.stripeService.handleCallback(userId);
+    async callback(
+        @GetUser("id") userId: number | undefined,
+        @Query("accountId") accountId?: string,
+    ) {
+        return this.stripeService.handleCallback(userId, accountId);
     }
 
     @Post("webhook")

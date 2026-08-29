@@ -10,6 +10,7 @@ export class User implements BaseUser {
     is_blocked: boolean;
     profile_id: number | null;
     role: UserRole;
+    fcmToken: string | null;
     stripe_account_id: string | null;
     stripe_onboarding_complete: boolean;
     language_preference: LanguagePreference;

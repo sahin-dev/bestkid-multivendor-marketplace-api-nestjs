@@ -11,3 +11,12 @@ model CompanyInfo {
 
     @@map("company_info")
 }
+
+model AboutUs {
+    id Int @id @default(autoincrement())
+    content String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@map("about_us")
+}

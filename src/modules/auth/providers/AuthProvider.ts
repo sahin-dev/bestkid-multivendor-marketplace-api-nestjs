@@ -21,16 +21,16 @@ export class AuthProvider {
         if (!user) {
             throw new NotFoundException("User bot found!")
         }
+        if (!(await this.encoder.compare(password, user.password))) {
+            throw new BadRequestException("Invalid username or password!")
+        }
+
         if (user.is_blocked) {
-            return { "user_is_blocked": true };
+            return { user_is_blocked: true };
         }
 
         if (user.email_verifird === false) {
-            return { "email_unverified": true }
-        }
-
-        if (!(await this.encoder.compare(password, user.password))) {
-            throw new BadRequestException("Invalid username or password!")
+            return { email_unverified: true }
         }
 
         const tokenPayload: TokenPayload = {
@@ -40,13 +40,17 @@ export class AuthProvider {
 
         }
 
-        const token = this.jwtService.sign(tokenPayload)
+        const token = this.generateJwtToken(tokenPayload)
 
         return token
 
     }
 
     public signToken(payload: TokenPayload): string {
+        return this.generateJwtToken(payload)
+    }
+
+    private generateJwtToken(payload: TokenPayload): string {
         return this.jwtService.sign(payload)
     }
 

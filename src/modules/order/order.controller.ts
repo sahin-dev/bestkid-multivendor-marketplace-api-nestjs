@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { GetUser, Roles } from "src/common/decorators";
 import { OrderService } from "./order.service";
@@ -6,6 +6,7 @@ import { CreateOrderDto } from "./dtos/create-order.dto";
 import { UpdateOrderStatusDto } from "./dtos/update-order-status.dto";
 import { BuyerOrderTab, OrderQueryDto, SellerOrderTab } from "./dtos/order-query.dto";
 import { CheckoutDto } from "./dtos/checkout.dto";
+import { ApplyCouponDto, BuyNowCheckoutSummaryDto, CheckoutSummaryQueryDto } from "./dtos/checkout-flow.dto";
 import { TokenPayload } from "../auth/types/TokenPayload.type";
 import { OrderStatus } from "generated/prisma/client";
 import { CancelOrderDto } from "./dtos/cancel-order.dto";
@@ -17,7 +18,7 @@ import { CreateReviewDto } from "../product/dtos/create-review.dto";
 export class OrderController {
     constructor(private readonly orderService: OrderService) {}
 
-    @Post()
+   
     @ApiOperation({ summary: "Create an order directly from submitted items", description: "Creates an order for the authenticated buyer. Checkout from cart is preferred for multi-seller carts." })
     @ApiBody({ type: CreateOrderDto })
     @ApiResponse({ status: 201, description: "Order created" })
@@ -26,11 +27,40 @@ export class OrderController {
     }
 
     @Post("checkout")
-    @ApiOperation({ summary: "Checkout the authenticated user's cart", description: "Groups cart items by seller, resolves delivery options, creates one order per seller, and clears the cart." })
+    @ApiOperation({ summary: "Checkout the authenticated user's cart", description: "Groups cart items by seller, resolves delivery options, applies an optional coupon, creates one order per seller, and clears the cart." })
     @ApiBody({ type: CheckoutDto })
     @ApiResponse({ status: 201, description: "Checkout completed; returns created orders" })
     async checkoutFromCart(@GetUser("id") userId: number, @Body() dto: CheckoutDto) {
         return this.orderService.checkoutFromCart(userId, dto);
+    }
+
+    @Get("checkout/summary")
+    @ApiOperation({ summary: "Preview checkout summary", description: "Returns seller-grouped cart items, delivery options, saved addresses, optional coupon discount, and price details for the checkout page." })
+    @ApiQuery({ name: "sellerIds", required: false, type: [Number] })
+    @ApiQuery({ name: "cartItemIds", required: false, type: [Number] })
+    @ApiQuery({ name: "addressId", required: false, type: Number })
+    @ApiQuery({ name: "country", required: false, type: String })
+    @ApiQuery({ name: "couponCode", required: false, type: String })
+    @ApiResponse({ status: 200, description: "Checkout summary for review before payment" })
+    async getCheckoutSummary(@GetUser("id") userId: number, @Query() query: CheckoutSummaryQueryDto) {
+        return this.orderService.getCheckoutSummary(userId, query);
+    }
+
+    @Post("checkout/buy-now-summary")
+    @HttpCode(HttpStatus.OK)
+    @ApiOperation({ summary: "Preview direct Buy Now checkout summary", description: "Returns price, delivery, coupon, and address summary for one product from the product details page before Stripe checkout." })
+    @ApiBody({ type: BuyNowCheckoutSummaryDto })
+    @ApiResponse({ status: 200, description: "Buy Now checkout summary for review before payment" })
+    async getBuyNowCheckoutSummary(@GetUser("id") userId: number, @Body() dto: BuyNowCheckoutSummaryDto) {
+        return this.orderService.getBuyNowCheckoutSummary(userId, dto);
+    }
+
+    @Post("checkout/apply-coupon")
+    @ApiOperation({ summary: "Apply coupon to checkout", description: "Validates a buyer-entered coupon code against the current cart, or against a direct Buy Now product when productId is provided." })
+    @ApiBody({ type: ApplyCouponDto })
+    @ApiResponse({ status: 200, description: "Coupon applied; returns discount and recalculated totals" })
+    async applyCoupon(@GetUser("id") userId: number, @Body() dto: ApplyCouponDto) {
+        return this.orderService.applyCoupon(userId, dto);
     }
 
     @Get()
@@ -52,6 +82,22 @@ export class OrderController {
     @ApiQuery({ name: "sellerTab", required: false, enum: SellerOrderTab })
     async findAllSellerOrders(@GetUser("id") sellerId: number, @Query() query: OrderQueryDto) {
         return this.orderService.findAllSellerOrders(sellerId, query);
+    }
+
+    @Get("seller/products/:productId/orders")
+    @Roles("USER", "ADMIN")
+    @ApiOperation({ summary: "Seller: list orders for a specific product", description: "Returns paginated seller orders that contain the selected product." })
+    @ApiParam({ name: "productId", type: Number })
+    @ApiQuery({ name: "page", required: false, type: Number })
+    @ApiQuery({ name: "limit", required: false, type: Number })
+    @ApiQuery({ name: "status", required: false, enum: OrderStatus })
+    @ApiQuery({ name: "sellerTab", required: false, enum: SellerOrderTab })
+    async findSellerOrdersByProduct(
+        @Param("productId", ParseIntPipe) productId: number,
+        @GetUser("id") sellerId: number,
+        @Query() query: OrderQueryDto,
+    ) {
+        return this.orderService.findSellerOrdersByProduct(productId, sellerId, query);
     }
 
     @Get("seller/:id")

@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from "@nestjs/swagger";
 import { Transform, Type } from "class-transformer";
 import { IsBoolean, IsEnum, IsInt, IsNumber, IsOptional, IsString, Max, Min } from "class-validator";
-import { Condition, ProductStatus } from "generated/prisma/client";
+import { AuthenticationStatus, Condition, ProductStatus } from "generated/prisma/client";
 
 export enum ProductSort {
     LATEST = "latest",
@@ -9,6 +9,15 @@ export enum ProductSort {
     PRICE_HIGH = "price_high",
     RATING = "rating",
     POPULAR = "popular",
+}
+
+export enum SellerProductStatus {
+    UNDER_REVIEW = "under_review",
+    LIVE = "live",
+    ACTION_REQUIRED = "action_required",
+    REJECTED = "rejected",
+    SOLD = "sold",
+    INACTIVE = "inactive",
 }
 
 export class ProductQueryDto {
@@ -69,6 +78,16 @@ export class ProductQueryDto {
     status?: ProductStatus;
 
     @IsOptional()
+    @IsEnum(SellerProductStatus)
+    @ApiPropertyOptional({ enum: SellerProductStatus, description: "Filter by derived seller-facing product status" })
+    sellerStatus?: SellerProductStatus;
+
+    @IsOptional()
+    @IsEnum(AuthenticationStatus)
+    @ApiPropertyOptional({ enum: AuthenticationStatus, description: "Filter by product authentication/moderation status" })
+    authenticationStatus?: AuthenticationStatus;
+
+    @IsOptional()
     @IsEnum(Condition)
     @ApiPropertyOptional({ enum: Condition, description: "Filter by product condition" })
     condition?: Condition;
@@ -91,9 +110,4 @@ export class ProductQueryDto {
     @IsBoolean()
     @ApiPropertyOptional({ description: "Only show discounted products" })
     discountedOnly?: boolean;
-
-    @IsOptional()
-    @IsString()
-    @ApiPropertyOptional({ description: "Filter by variant or size label" })
-    size?: string;
 }

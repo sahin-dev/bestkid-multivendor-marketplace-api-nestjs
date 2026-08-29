@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { Public, Roles } from "src/common/decorators";
 import { PaginationDto } from "src/common/dtos/pagination.dto";
@@ -8,6 +8,7 @@ import { CreateFaqDto } from "./dtos/create-faq.dto";
 import { UpdateFaqDto } from "./dtos/update-faq.dto";
 import { UpsertLegalDto } from "./dtos/upsert-legal.dto";
 import { UpsertCompanyInfoDto } from "./dtos/upsert-company-info.dto";
+import { UpsertAboutUsDto } from "./dtos/upsert-about-us.dto";
 import { CreateContactRequestDto } from "./dtos/create-contact-request.dto";
 import { ReplyContactRequestDto } from "./dtos/reply-contact-request.dto";
 import { LegalDocumentType } from "generated/prisma/client";
@@ -120,7 +121,26 @@ export class ContentController {
         return this.contentService.upsertCompanyInfo(dto);
     }
 
-    // ─── Contact Requests ────────────────────────────────────────────────────────
+    // About Us
+
+    @Get("about-us")
+    @Public()
+    @ApiOperation({ summary: "Get About Us page content" })
+    getAboutUs() {
+        return this.contentService.getAboutUs();
+    }
+
+    @Post("about-us")
+    @HttpCode(HttpStatus.OK)
+    @ApiBearerAuth("access-token")
+    @Roles("ADMIN")
+    @ApiOperation({ summary: "Admin: create or update About Us page content" })
+    @ApiBody({ type: UpsertAboutUsDto })
+    upsertAboutUs(@Body() dto: UpsertAboutUsDto) {
+        return this.contentService.upsertAboutUs(dto);
+    }
+
+    // Contact Requests
 
     @Post("contact")
     @Public()

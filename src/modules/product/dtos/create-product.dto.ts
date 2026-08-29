@@ -1,5 +1,4 @@
 import { ApiProperty } from "@nestjs/swagger";
-import { Type } from "class-transformer";
 import {
     IsArray,
     IsEnum,
@@ -9,85 +8,83 @@ import {
     IsOptional,
     IsPositive,
     IsString,
-    ValidateNested,
 } from "class-validator";
 import { Condition, ProductStatus } from "generated/prisma/client";
-
-export class ProductVariantInputDto {
-    @IsString()
-    @IsNotEmpty()
-    @ApiProperty({ description: "Variant name, e.g. S, M, XL, Red" })
-    variantName: string;
-
-    @IsNumber()
-    @IsPositive()
-    @IsOptional()
-    @ApiProperty({ required: false, description: "Optional variant-specific price" })
-    price?: number;
-}
 
 export class CreateProductDto {
     @IsString()
     @IsNotEmpty()
-    @ApiProperty({ description: "Product name" })
+    @ApiProperty({ example: "Kids Cotton Hoodie - Soft Fit", description: "Product name" })
     name: string;
 
     @IsString()
     @IsOptional()
-    @ApiProperty({ required: false, description: "Product description" })
+    @ApiProperty({
+        required: false,
+        example: "Comfortable and lightweight kids hoodie designed for everyday use.",
+        description: "Product description",
+    })
     description?: string;
+
+    @IsString()
+    @IsOptional()
+    @ApiProperty({ required: false, example: "Grade 3", description: "Target school grade for the product" })
+    grade?: string;
 
     @IsNumber()
     @IsPositive()
-    @ApiProperty({ description: "Original price of the product" })
+    @ApiProperty({ example: 21.99, description: "Original price of the product" })
     original_price: number;
 
     @IsNumber()
     @IsPositive()
     @IsOptional()
-    @ApiProperty({ required: false, description: "Discounted price of the product" })
+    @ApiProperty({ required: false, example: 18, description: "Discounted price of the product" })
     discounted_price?: number;
 
     @IsNumber()
-    @IsPositive()
     @IsOptional()
-    @ApiProperty({ required: false, description: "Discount percentage" })
+    @ApiProperty({ required: false, example: 18, description: "Discount percentage" })
     discount_percentage?: number;
 
     @IsArray()
     @IsString({ each: true })
     @IsOptional()
-    @ApiProperty({ required: false, type: [String], description: "List of product image URLs" })
+    @ApiProperty({
+        required: false,
+        type: [String],
+        example: ["https://cdn.bestkid.test/products/hoodie-front.png"],
+        description: "List of product image URLs",
+    })
     image_urls?: string[];
 
     @IsInt()
-    @ApiProperty({ description: "Category ID" })
+    @ApiProperty({ example: 1, description: "Category ID" })
     categoryId: number;
 
     @IsInt()
-    @ApiProperty({ description: "Subcategory ID" })
+    @ApiProperty({ example: 2, description: "Subcategory ID" })
     subCategoryId: number;
 
     @IsEnum(Condition)
     @IsOptional()
-    @ApiProperty({ required: false, enum: Condition, default: Condition.NEW, description: "Condition of the product" })
+    @ApiProperty({
+        required: false,
+        enum: Condition,
+        default: Condition.NEW,
+        example: Condition.NEW,
+        description: "Condition of the product",
+    })
     condition?: Condition;
 
     @IsEnum(ProductStatus)
     @IsOptional()
-    @ApiProperty({ required: false, enum: ProductStatus, default: ProductStatus.INACTIVE, description: "Product status" })
+    @ApiProperty({
+        required: false,
+        enum: ProductStatus,
+        default: ProductStatus.INACTIVE,
+        example: ProductStatus.INACTIVE,
+        description: "Product status",
+    })
     status?: ProductStatus;
-
-    @IsArray()
-    @ValidateNested({ each: true })
-    @Type(() => ProductVariantInputDto)
-    @IsOptional()
-    @ApiProperty({ required: false, type: [ProductVariantInputDto], description: "Product variants submitted with the product form" })
-    variants?: ProductVariantInputDto[];
-
-    @IsArray()
-    @IsString({ each: true })
-    @IsOptional()
-    @ApiProperty({ required: false, type: [String], description: "Shorthand variant names, e.g. ['S','M','L']" })
-    variant_names?: string[];
 }

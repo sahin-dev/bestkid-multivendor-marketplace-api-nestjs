@@ -6,15 +6,17 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { AddToCartDto } from "./dtos/add-to-cart.dto";
-import { UpdateCartItemDto } from "./dtos/update-cart-item.dto";
 import { DeliveryService } from "../delivery/delivery.service";
 import { assertEntityExists } from "src/common/validators/entity-exists.validator";
+import { AuthenticationStatus, CurrencyPreference, ProductStatus } from "generated/prisma/client";
+import { CurrencyConversionService } from "../currency/currency.service";
 
 @Injectable()
 export class CartService {
     constructor(
         private readonly prismaService: PrismaService,
         private readonly deliveryService: DeliveryService,
+        private readonly currencyService: CurrencyConversionService,
     ) {}
 
     // ─── Get or create the user's cart ──────────────────────────────────────────
@@ -33,71 +35,63 @@ export class CartService {
             include: { user: { select: { stripe_onboarding_complete: true } } },
         });
         if (!product) throw new NotFoundException(`Product with ID ${dto.productId} not found`);
-        if (product.status !== "ACTIVE") throw new BadRequestException("Product is not available");
+        if (product.status !== ProductStatus.ACTIVE) throw new BadRequestException("Product is not available");
+        if (product.authentication_status !== AuthenticationStatus.VERIFIED) {
+            throw new BadRequestException("This item has not been authenticated yet");
+        }
+        if (product.userId === userId) throw new BadRequestException("You cannot add your own product to cart");
         if (!product.user.stripe_onboarding_complete) {
             throw new ForbiddenException("This seller has not completed payment setup.");
         }
 
-        // Validate variant
-        const variant = await this.prismaService.productVariant.findFirst({
-            where: { id: dto.variantId, productId: dto.productId },
-        });
-        if (!variant) {
-            await assertEntityExists(this.prismaService.productVariant, "Product variant", dto.variantId);
-            throw new NotFoundException(`Product variant with ID ${dto.variantId} not found for Product with ID ${dto.productId}`);
-        }
-
         const cart = await this.getOrCreateCart(userId);
 
-        // Upsert cart item (increment if exists)
         const existing = await this.prismaService.cartItem.findFirst({
-            where: { cartId: cart.id, productId: dto.productId, variantId: dto.variantId },
+            where: { cartId: cart.id, productId: dto.productId },
         });
 
         if (existing) {
-            return this.prismaService.cartItem.update({
-                where: { id: existing.id },
-                data: { quantity: existing.quantity + dto.quantity },
-            });
+            return existing;
         }
 
         return this.prismaService.cartItem.create({
             data: {
                 cartId: cart.id,
                 productId: dto.productId,
-                variantId: dto.variantId,
-                quantity: dto.quantity,
             },
         });
     }
 
     // ─── Get cart grouped by seller ──────────────────────────────────────────────
     async getCart(userId: number, buyerCountry?: string) {
-        const cart = await this.prismaService.cart.findUnique({
-            where: { userId },
-            include: {
-                cartItems: {
-                    include: {
-                        product: {
-                            include: {
-                                user: {
-                                    select: {
-                                        id: true,
-                                        profile: { select: { full_name: true, avatar_url: true, country: true } },
-                                        delivery_option: true,
+        const [cart, userCurrency] = await Promise.all([
+            this.prismaService.cart.findUnique({
+                where: { userId },
+                include: {
+                    cartItems: {
+                        include: {
+                            product: {
+                                include: {
+                                    user: {
+                                        select: {
+                                            id: true,
+                                            profile: { select: { full_name: true, avatar_url: true, country: true } },
+                                            delivery_option: true,
+                                        },
                                     },
+                                    category: true,
+                                    subCategory: true,
                                 },
-                                variants: true,
                             },
                         },
-                        variant: true,
                     },
                 },
-            },
-        });
+            }),
+            this.getUserCurrency(userId),
+        ]);
 
         if (!cart || cart.cartItems.length === 0) {
-            return { seller_groups: [], grand_total: 0 };
+            return { seller_groups: [], grand_total: 0, currency: userCurrency };
         }
 
         // Group by seller
@@ -121,13 +115,16 @@ export class CartService {
                 sellerCountry,
             );
 
-            const subtotal = items.reduce((sum, i) => {
+            const subtotalUsd = items.reduce((sum, i) => {
                 const price = i.product.discounted_price ?? i.product.original_price;
-                return sum + price * i.quantity;
+                return sum + price;
             }, 0);
 
-            const deliveryCost = delivery.cost;
-            const groupTotal = subtotal + deliveryCost;
+            const deliveryCostUsd = delivery.cost;
+            const groupTotalUsd = subtotalUsd + deliveryCostUsd;
+            const subtotal = await this.convertUsdAmount(subtotalUsd, userCurrency);
+            const deliveryCost = await this.convertUsdAmount(deliveryCostUsd, userCurrency);
+            const groupTotal = await this.convertUsdAmount(groupTotalUsd, userCurrency);
             grandTotal += groupTotal;
 
             sellerGroups.push({
@@ -139,42 +136,28 @@ export class CartService {
                     days_min: delivery.days_min,
                     days_max: delivery.days_max,
                 },
-                items: items.map((i) => ({
-                    id: i.id,
-                    productId: i.productId,
-                    variantId: i.variantId,
-                    quantity: i.quantity,
-                    price: i.product.discounted_price ?? i.product.original_price,
-                    product: {
-                        id: i.product.id,
-                        name: i.product.name,
-                        image_urls: i.product.image_urls,
-                        status: i.product.status,
-                    },
-                    variant: { id: i.variant.id, variantName: i.variant.variantName, price: i.variant.price },
-                })),
+                items: await Promise.all(
+                    items.map(async (i) => ({
+                        id: i.id,
+                        productId: i.productId,
+                        price: await this.convertUsdAmount(i.product.discounted_price ?? i.product.original_price, userCurrency),
+                        product: {
+                            id: i.product.id,
+                            name: i.product.name,
+                            image_urls: i.product.image_urls,
+                            category:i.product.category,
+                            sub_category:i.product.subCategory,
+                            status: i.product.status,
+                        },
+                    })),
+                ),
                 subtotal,
                 delivery_cost: deliveryCost,
                 group_total: groupTotal,
             });
         }
 
-        return { seller_groups: sellerGroups, grand_total: grandTotal };
-    }
-
-    // ─── Update item quantity ────────────────────────────────────────────────────
-    async updateItem(userId: number, itemId: number, dto: UpdateCartItemDto) {
-        const item = await this.prismaService.cartItem.findUnique({
-            where: { id: itemId },
-            include: { cart: true },
-        });
-        if (!item) throw new NotFoundException("Cart item not found");
-        if (item.cart.userId !== userId) throw new ForbiddenException("Not your cart item");
-
-        return this.prismaService.cartItem.update({
-            where: { id: itemId },
-            data: { quantity: dto.quantity },
-        });
+        return { seller_groups: sellerGroups, grand_total: grandTotal, currency: userCurrency };
     }
 
     // ─── Remove item ─────────────────────────────────────────────────────────────
@@ -196,5 +179,22 @@ export class CartService {
         if (!cart) return { message: "Cart is already empty" };
         await this.prismaService.cartItem.deleteMany({ where: { cartId: cart.id } });
         return { message: "Cart cleared" };
+    }
+
+    private async getUserCurrency(userId: number): Promise<CurrencyPreference> {
+        const user = await this.prismaService.baseUser.findUnique({
+            where: { id: userId },
+            select: { currency_preference: true },
+        });
+
+        return user?.currency_preference ?? CurrencyPreference.USD;
+    }
+
+    private async convertUsdAmount(amount: number, currency: CurrencyPreference) {
+        if (currency === CurrencyPreference.USD) {
+            return Number(amount.toFixed(2));
+        }
+
+        return this.currencyService.convertAsync(amount, CurrencyPreference.USD, currency);
     }
 }

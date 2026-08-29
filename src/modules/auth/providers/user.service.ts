@@ -60,9 +60,10 @@ export class UserService {
     }
 
     async emailVerified(userId: number) {
-        await this.prismaService.baseUser.update({
+        return this.prismaService.baseUser.update({
             where: { id: userId },
             data: { email_verifird: true },
+            include: { profile: true },
         });
     }
 
@@ -91,6 +92,15 @@ export class UserService {
         return this.prismaService.baseUser.update({
             where: { id: userId },
             data: { password: hashedPassword },
+        });
+    }
+
+    async updateFcmToken(userId: number, fcmToken?: string | null) {
+        const normalizedToken = fcmToken?.trim();
+
+        return this.prismaService.baseUser.update({
+            where: { id: userId },
+            data: { fcmToken: normalizedToken || null },
         });
     }
 }

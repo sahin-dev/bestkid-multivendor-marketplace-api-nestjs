@@ -6,10 +6,51 @@ model Notification {
     type NotificationType
     isRead Boolean @default(false)
     user  BaseUser @relation(fields: [userId], references: [id])
+    pushLogs PushNotificationLog[]
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
     @@map("notifications")
+}
+
+model UserDeviceToken {
+    id Int @id @default(autoincrement())
+    userId Int @unique
+    token String
+    platform String? @default("ANDROID")
+    isActive Boolean @default(true)
+    user BaseUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+    pushLogs PushNotificationLog[]
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([userId, isActive])
+    @@map("user_device_tokens")
+}
+
+model PushNotificationLog {
+    id Int @id @default(autoincrement())
+    userId Int
+    notificationId Int?
+    tokenId Int?
+    title String
+    message String
+    type NotificationType
+    payload Json?
+    status PushDeliveryStatus @default(PENDING)
+    attempts Int @default(0)
+    maxAttempts Int @default(5)
+    lastError String?
+    sentAt DateTime?
+    nextAttemptAt DateTime?
+    user BaseUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+    notification Notification? @relation(fields: [notificationId], references: [id], onDelete: SetNull)
+    deviceToken UserDeviceToken? @relation(fields: [tokenId], references: [id], onDelete: SetNull)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([userId, status, nextAttemptAt])
+    @@map("push_notification_logs")
 }
 
 enum NotificationType {
@@ -18,5 +59,12 @@ enum NotificationType {
     REVIEW
     OTHER
     PROMOTION
-    
+    RETURN
+    AUTHENTICATION
+}
+
+enum PushDeliveryStatus {
+    PENDING
+    SENT
+    FAILED
 }

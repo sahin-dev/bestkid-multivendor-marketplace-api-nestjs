@@ -1,12 +1,27 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+    BadRequestException,
+    ForbiddenException,
+    Injectable,
+    NotFoundException,
+} from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateReturnDto } from "./dtos/create-return.dto";
-import { ReturnQueryDto, ReturnTab, SellerReturnTab } from "./dtos/return-query.dto";
-import { OrderStatus, ReturnStatus, NotificationType } from "generated/prisma/client";
+import {
+    ReturnQueryDto,
+    ReturnTab,
+    SellerReturnTab,
+} from "./dtos/return-query.dto";
+import {
+    OrderStatus,
+    ReturnStatus,
+    NotificationType,
+} from "generated/prisma/client";
 import { NotificationService } from "../notification/notification.service";
 import { UpdateReturnStatusDto } from "./dtos/update-return-status.dto";
 import { ChatService } from "../chat/chat.service";
 import { assertEntityExists } from "src/common/validators/entity-exists.validator";
+import { StripeService } from "../stripe/stripe.service";
+import { TbiCreditService } from "../tbi-credit/tbi-credit.service";
 
 @Injectable()
 export class ReturnService {
@@ -14,6 +29,8 @@ export class ReturnService {
         private readonly prismaService: PrismaService,
         private readonly notificationService: NotificationService,
         private readonly chatService: ChatService,
+        private readonly stripeService: StripeService,
+        private readonly tbiCreditService: TbiCreditService,
     ) {}
 
     async createReturn(userId: number, dto: CreateReturnDto) {
@@ -26,7 +43,9 @@ export class ReturnService {
         });
 
         if (!orderItem) {
-            throw new NotFoundException(`Order item with ID ${dto.orderItemId} not found`);
+            throw new NotFoundException(
+                `Order item with ID ${dto.orderItemId} not found`,
+            );
         }
 
         // Validate buyer ownership
@@ -35,7 +54,9 @@ export class ReturnService {
         }
 
         if (orderItem.order.status !== OrderStatus.DELIVERED) {
-            throw new BadRequestException("You can request a return only after the order is delivered");
+            throw new BadRequestException(
+                "You can request a return only after the order is delivered",
+            );
         }
 
         // Check if return request already exists
@@ -43,7 +64,9 @@ export class ReturnService {
             where: { orderItemId: dto.orderItemId },
         });
         if (existing) {
-            throw new BadRequestException("A return request already exists for this order item");
+            throw new BadRequestException(
+                "A return request already exists for this order item",
+            );
         }
 
         // Create return request
@@ -65,7 +88,7 @@ export class ReturnService {
                 orderItem.order.sellerId,
                 "New Return Request Received",
                 `A return request has been submitted for order item #${orderItem.id}.`,
-                NotificationType.ORDER,
+                NotificationType.RETURN,
             );
         } catch (e) {
             console.error("Failed to send notification to seller", e);
@@ -116,7 +139,9 @@ export class ReturnService {
         });
 
         if (!request) {
-            throw new NotFoundException(`Return request with ID ${returnId} not found`);
+            throw new NotFoundException(
+                `Return request with ID ${returnId} not found`,
+            );
         }
 
         if (role !== "ADMIN") {
@@ -124,7 +149,9 @@ export class ReturnService {
             const isSeller = request.orderItem.order.sellerId === userId;
 
             if (!isBuyer && !isSeller) {
-                throw new ForbiddenException("You do not have permission to view this return request");
+                throw new ForbiddenException(
+                    "You do not have permission to view this return request",
+                );
             }
         }
 
@@ -145,7 +172,9 @@ export class ReturnService {
         if (status) {
             whereClause.status = status;
         } else if (sellerTab) {
-            whereClause.status = { in: this.getStatusesForSellerTab(sellerTab) };
+            whereClause.status = {
+                in: this.getStatusesForSellerTab(sellerTab),
+            };
         }
 
         const [data, total] = await Promise.all([
@@ -172,28 +201,42 @@ export class ReturnService {
         };
     }
 
-    async updateReturnStatusSeller(returnId: number, sellerId: number, dto: UpdateReturnStatusDto) {
+    async updateReturnStatusSeller(
+        returnId: number,
+        sellerId: number,
+        dto: UpdateReturnStatusDto,
+    ) {
         const request = await this.prismaService.returnRequest.findUnique({
             where: { id: returnId },
             include: this.getReturnDetailInclude(),
         });
 
         if (!request) {
-            throw new NotFoundException(`Return request with ID ${returnId} not found`);
+            throw new NotFoundException(
+                `Return request with ID ${returnId} not found`,
+            );
         }
 
         if (request.orderItem.order.sellerId !== sellerId) {
-            throw new ForbiddenException("You do not have permission to update this return request");
+            throw new ForbiddenException(
+                "You do not have permission to update this return request",
+            );
         }
 
         this.validateReturnStatusTransition(request.status, dto.status);
         this.validateSellerReturnUpdate(dto);
 
+        const refundResult = await this.refundIfReturnAccepted(
+            returnId,
+            request.refunded_at,
+            dto,
+        );
         const updated = await this.prismaService.returnRequest.update({
             where: { id: returnId },
-            data: this.getReturnUpdateData(dto),
+            data: this.getReturnUpdateData(dto, refundResult),
             include: this.getReturnDetailInclude(),
         });
+        await this.markOrderRefundedIfFullyReturned(updated.orderItem.order.id);
 
         // Notify buyer
         try {
@@ -201,7 +244,7 @@ export class ReturnService {
                 request.userId,
                 "Return Request Status Update",
                 `Your return request for item #${request.orderItem.id} has been ${dto.status}.`,
-                NotificationType.ORDER,
+                NotificationType.RETURN,
             );
         } catch (e) {
             console.error("Failed to notify buyer", e);
@@ -243,20 +286,31 @@ export class ReturnService {
         };
     }
 
-    async updateReturnStatusAdmin(returnId: number, dto: UpdateReturnStatusDto) {
+    async updateReturnStatusAdmin(
+        returnId: number,
+        dto: UpdateReturnStatusDto,
+    ) {
         const request = await this.prismaService.returnRequest.findUnique({
             where: { id: returnId },
         });
 
         if (!request) {
-            throw new NotFoundException(`Return request with ID ${returnId} not found`);
+            throw new NotFoundException(
+                `Return request with ID ${returnId} not found`,
+            );
         }
 
+        const refundResult = await this.refundIfReturnAccepted(
+            returnId,
+            request.refunded_at,
+            dto,
+        );
         const updated = await this.prismaService.returnRequest.update({
             where: { id: returnId },
-            data: this.getReturnUpdateData(dto),
+            data: this.getReturnUpdateData(dto, refundResult),
             include: this.getReturnDetailInclude(),
         });
+        await this.markOrderRefundedIfFullyReturned(updated.orderItem.order.id);
 
         // Notify buyer
         try {
@@ -280,12 +334,16 @@ export class ReturnService {
         });
 
         if (!request) {
-            throw new NotFoundException(`Return request with ID ${returnId} not found`);
+            throw new NotFoundException(
+                `Return request with ID ${returnId} not found`,
+            );
         }
 
         const order = request.orderItem.order;
         if (order.userId !== userId && order.sellerId !== userId) {
-            throw new ForbiddenException("You do not have permission to access this return conversation");
+            throw new ForbiddenException(
+                "You do not have permission to access this return conversation",
+            );
         }
 
         return this.chatService.findOrCreateRoom(order.userId, order.sellerId);
@@ -294,7 +352,11 @@ export class ReturnService {
     private getStatusesForTab(tab: ReturnTab) {
         const tabMap: Record<ReturnTab, ReturnStatus[]> = {
             [ReturnTab.RETURN_REQUESTS]: [ReturnStatus.PENDING],
-            [ReturnTab.ACCEPTED]: [ReturnStatus.APPROVED, ReturnStatus.PROCESSING, ReturnStatus.COMPLETED],
+            [ReturnTab.ACCEPTED]: [
+                ReturnStatus.APPROVED,
+                ReturnStatus.PROCESSING,
+                ReturnStatus.COMPLETED,
+            ],
             [ReturnTab.REJECTED]: [ReturnStatus.REJECTED],
         };
         return tabMap[tab];
@@ -303,7 +365,10 @@ export class ReturnService {
     private getStatusesForSellerTab(tab: SellerReturnTab) {
         const tabMap: Record<SellerReturnTab, ReturnStatus[]> = {
             [SellerReturnTab.IN_REVIEW]: [ReturnStatus.PENDING],
-            [SellerReturnTab.PROCESSING]: [ReturnStatus.APPROVED, ReturnStatus.PROCESSING],
+            [SellerReturnTab.PROCESSING]: [
+                ReturnStatus.APPROVED,
+                ReturnStatus.PROCESSING,
+            ],
             [SellerReturnTab.COMPLETED]: [ReturnStatus.COMPLETED],
             [SellerReturnTab.REJECTED]: [ReturnStatus.REJECTED],
         };
@@ -314,22 +379,36 @@ export class ReturnService {
         return {
             orderItem: {
                 include: {
-                    product: { select: { id: true, name: true, image_urls: true } },
-                    variant: true,
+                    product: {
+                        select: { id: true, name: true, image_urls: true },
+                    },
                     order: {
                         include: {
                             seller: {
                                 select: {
                                     id: true,
                                     email: true,
-                                    profile: { select: { full_name: true, avatar_url: true, country: true } },
+                                    profile: {
+                                        select: {
+                                            full_name: true,
+                                            avatar_url: true,
+                                            country: true,
+                                        },
+                                    },
                                 },
                             },
                             user: {
                                 select: {
                                     id: true,
                                     email: true,
-                                    profile: { select: { full_name: true, avatar_url: true, country: true, phone: true } },
+                                    profile: {
+                                        select: {
+                                            full_name: true,
+                                            avatar_url: true,
+                                            country: true,
+                                            phone: true,
+                                        },
+                                    },
                                 },
                             },
                         },
@@ -343,28 +422,48 @@ export class ReturnService {
         return {
             orderItem: {
                 include: {
-                    product: { select: { id: true, name: true, image_urls: true } },
-                    variant: true,
+                    product: {
+                        select: { id: true, name: true, image_urls: true },
+                    },
                     order: {
                         include: {
                             seller: {
                                 select: {
                                     id: true,
                                     email: true,
-                                    profile: { select: { full_name: true, avatar_url: true, country: true, phone: true } },
+                                    profile: {
+                                        select: {
+                                            full_name: true,
+                                            avatar_url: true,
+                                            country: true,
+                                            phone: true,
+                                        },
+                                    },
                                 },
                             },
                             user: {
                                 select: {
                                     id: true,
                                     email: true,
-                                    profile: { select: { full_name: true, avatar_url: true, country: true, phone: true } },
+                                    profile: {
+                                        select: {
+                                            full_name: true,
+                                            avatar_url: true,
+                                            country: true,
+                                            phone: true,
+                                        },
+                                    },
                                 },
                             },
                             items: {
                                 include: {
-                                    product: { select: { id: true, name: true, image_urls: true } },
-                                    variant: true,
+                                    product: {
+                                        select: {
+                                            id: true,
+                                            name: true,
+                                            image_urls: true,
+                                        },
+                                    },
                                 },
                             },
                         },
@@ -390,8 +489,6 @@ export class ReturnService {
                 productId: request.orderItem.productId,
                 name: request.orderItem.product?.name,
                 image_url: request.orderItem.product?.image_urls?.[0] ?? null,
-                variant: request.orderItem.variant,
-                quantity: request.orderItem.quantity,
                 price: request.orderItem.price,
             },
         };
@@ -403,14 +500,19 @@ export class ReturnService {
             buyer: request.user ?? request.orderItem.order.user ?? null,
             actions: {
                 can_view_details: true,
-                can_update_status: ![ReturnStatus.COMPLETED, ReturnStatus.REJECTED].includes(request.status),
+                can_update_status: ![
+                    ReturnStatus.COMPLETED,
+                    ReturnStatus.REJECTED,
+                ].includes(request.status),
             },
         };
     }
 
     private async formatReturnDetail(request: any, viewerId?: number) {
         const order = request.orderItem.order;
-        const chatRoomId = viewerId ? await this.getExistingChatRoomId(order.userId, order.sellerId) : null;
+        const chatRoomId = viewerId
+            ? await this.getExistingChatRoomId(order.userId, order.sellerId)
+            : null;
 
         return {
             id: request.id,
@@ -447,10 +549,8 @@ export class ReturnService {
                 items: order.items.map((item: any) => ({
                     id: item.id,
                     productId: item.productId,
-                    variantId: item.variantId,
-                    quantity: item.quantity,
                     price: item.price,
-                    line_total: item.price * item.quantity,
+                    line_total: item.price,
                     product: item.product
                         ? {
                               id: item.product.id,
@@ -459,41 +559,65 @@ export class ReturnService {
                               image_url: item.product.image_urls?.[0] ?? null,
                           }
                         : null,
-                    variant: item.variant,
                     is_returned_item: item.id === request.orderItemId,
                 })),
             },
             returned_item: {
                 id: request.orderItem.id,
                 productId: request.orderItem.productId,
-                variantId: request.orderItem.variantId,
-                quantity: request.orderItem.quantity,
                 price: request.orderItem.price,
                 product: request.orderItem.product,
-                variant: request.orderItem.variant,
             },
             actions: {
                 can_message_seller: true,
-                can_update_status: ![ReturnStatus.COMPLETED, ReturnStatus.REJECTED].includes(request.status),
-                can_send_return_instructions: [ReturnStatus.PENDING, ReturnStatus.APPROVED].includes(request.status),
-                can_complete_refund: [ReturnStatus.APPROVED, ReturnStatus.PROCESSING].includes(request.status),
-                can_reject: ![ReturnStatus.COMPLETED, ReturnStatus.REJECTED].includes(request.status),
+                can_update_status: ![
+                    ReturnStatus.COMPLETED,
+                    ReturnStatus.REJECTED,
+                ].includes(request.status),
+                can_send_return_instructions: [
+                    ReturnStatus.PENDING,
+                    ReturnStatus.APPROVED,
+                ].includes(request.status),
+                can_complete_refund: [
+                    ReturnStatus.APPROVED,
+                    ReturnStatus.PROCESSING,
+                ].includes(request.status),
+                can_reject: ![
+                    ReturnStatus.COMPLETED,
+                    ReturnStatus.REJECTED,
+                ].includes(request.status),
             },
         };
     }
 
-    private validateReturnStatusTransition(currentStatus: ReturnStatus, nextStatus: ReturnStatus) {
+    private validateReturnStatusTransition(
+        currentStatus: ReturnStatus,
+        nextStatus: ReturnStatus,
+    ) {
         const validTransitions: Record<ReturnStatus, ReturnStatus[]> = {
-            [ReturnStatus.PENDING]: [ReturnStatus.APPROVED, ReturnStatus.PROCESSING, ReturnStatus.REJECTED],
-            [ReturnStatus.APPROVED]: [ReturnStatus.PROCESSING, ReturnStatus.COMPLETED, ReturnStatus.REJECTED],
-            [ReturnStatus.PROCESSING]: [ReturnStatus.COMPLETED, ReturnStatus.REJECTED],
+            [ReturnStatus.PENDING]: [
+                ReturnStatus.APPROVED,
+                ReturnStatus.PROCESSING,
+                ReturnStatus.REJECTED,
+            ],
+            [ReturnStatus.APPROVED]: [
+                ReturnStatus.PROCESSING,
+                ReturnStatus.COMPLETED,
+                ReturnStatus.REJECTED,
+            ],
+            [ReturnStatus.PROCESSING]: [
+                ReturnStatus.COMPLETED,
+                ReturnStatus.REJECTED,
+            ],
             [ReturnStatus.COMPLETED]: [],
             [ReturnStatus.REJECTED]: [],
         };
 
         const allowed = validTransitions[currentStatus] ?? [];
         if (!allowed.includes(nextStatus)) {
-            throw new BadRequestException(`Invalid return status transition from ${currentStatus} to ${nextStatus}`);
+            throw new BadRequestException(
+                `Invalid return status transition from ${currentStatus} to ${nextStatus}`,
+            );
         }
     }
 
@@ -507,31 +631,113 @@ export class ReturnService {
         if (!allowed.includes(dto.status)) {
             throw new BadRequestException("Unsupported return status update");
         }
-        if (dto.status === ReturnStatus.REJECTED && !dto.seller_rejection_reason?.trim()) {
-            throw new BadRequestException("seller_rejection_reason is required when rejecting a return");
+        if (
+            dto.status === ReturnStatus.REJECTED &&
+            !dto.seller_rejection_reason?.trim()
+        ) {
+            throw new BadRequestException(
+                "seller_rejection_reason is required when rejecting a return",
+            );
         }
         if (
-            (dto.status === ReturnStatus.APPROVED || dto.status === ReturnStatus.PROCESSING) &&
+            (dto.status === ReturnStatus.APPROVED ||
+                dto.status === ReturnStatus.PROCESSING) &&
             !dto.return_address?.trim()
         ) {
-            throw new BadRequestException("return_address is required when accepting or processing a return");
+            throw new BadRequestException(
+                "return_address is required when accepting or processing a return",
+            );
         }
-        if (dto.status === ReturnStatus.COMPLETED && dto.refund_amount !== undefined && dto.refund_amount <= 0) {
-            throw new BadRequestException("refund_amount must be greater than zero");
+        if (
+            dto.status === ReturnStatus.COMPLETED &&
+            dto.refund_amount !== undefined &&
+            dto.refund_amount <= 0
+        ) {
+            throw new BadRequestException(
+                "refund_amount must be greater than zero",
+            );
         }
     }
 
-    private getReturnUpdateData(dto: UpdateReturnStatusDto) {
+    private async refundIfReturnAccepted(
+        returnId: number,
+        alreadyRefundedAt: Date | null,
+        dto: UpdateReturnStatusDto,
+    ) {
+        const refundableStatuses: ReturnStatus[] = [
+            ReturnStatus.APPROVED,
+            ReturnStatus.COMPLETED,
+        ];
+        if (!refundableStatuses.includes(dto.status)) {
+            return null;
+        }
+
+        if (alreadyRefundedAt) {
+            return null;
+        }
+
+        await this.tbiCreditService.markRefundRequiresManualProcessing(
+            returnId,
+            dto.refund_amount,
+        );
+
+        return this.stripeService.refundReturnRequestPayment(
+            returnId,
+            dto.refund_amount,
+        );
+    }
+
+    private async markOrderRefundedIfFullyReturned(orderId: number) {
+        const order = await this.prismaService.order.findUnique({
+            where: { id: orderId },
+            include: {
+                items: {
+                    include: {
+                        returnRequests: true,
+                    },
+                },
+            },
+        });
+
+        if (!order || order.items.length === 0) {
+            return;
+        }
+
+        const allItemsRefunded = order.items.every((item) =>
+            item.returnRequests.some((request) => Boolean(request.refunded_at)),
+        );
+
+        if (allItemsRefunded && order.status !== OrderStatus.REFUNDED) {
+            await this.prismaService.order.update({
+                where: { id: orderId },
+                data: { status: OrderStatus.REFUNDED },
+            });
+        }
+    }
+
+    private getReturnUpdateData(
+        dto: UpdateReturnStatusDto,
+        refundResult?: { refund_amount?: number } | null,
+    ) {
+        const refundAmount = refundResult?.refund_amount ?? dto.refund_amount;
+        const refundedAt = refundResult
+            ? new Date()
+            : dto.status === ReturnStatus.COMPLETED
+              ? new Date()
+              : undefined;
+
         return {
             status: dto.status,
             seller_response: dto.seller_response,
             seller_rejection_reason: dto.seller_rejection_reason,
             return_address: dto.return_address,
-            refund_amount: dto.refund_amount,
-            completed_at: dto.status === ReturnStatus.COMPLETED ? new Date() : undefined,
-            refunded_at: dto.status === ReturnStatus.COMPLETED ? new Date() : undefined,
+            refund_amount: refundAmount,
+            completed_at:
+                dto.status === ReturnStatus.COMPLETED ? new Date() : undefined,
+            refunded_at: refundedAt,
             resolved_at:
-                dto.status === ReturnStatus.REJECTED || dto.status === ReturnStatus.COMPLETED
+                dto.status === ReturnStatus.REJECTED ||
+                dto.status === ReturnStatus.COMPLETED
                     ? new Date()
                     : undefined,
         };

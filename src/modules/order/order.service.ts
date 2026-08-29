@@ -1,14 +1,20 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from "@nestjs/common";
+import { Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateOrderDto } from "./dtos/create-order.dto";
 import { BuyerOrderTab, OrderQueryDto, SellerOrderTab } from "./dtos/order-query.dto";
 import { CheckoutDto } from "./dtos/checkout.dto";
+import { ApplyCouponDto, BuyNowCheckoutSummaryDto, CheckoutSummaryQueryDto, CreateBuyNowCheckoutSessionDto } from "./dtos/checkout-flow.dto";
 import { DeliveryService } from "../delivery/delivery.service";
-import { OrderCancellationActor, OrderStatus, NotificationType } from "generated/prisma/client";
+import { AuthenticationStatus, CouponDiscountType, CouponUsageType, CurrencyPreference, OrderCancellationActor, OrderStatus, ProductStatus, NotificationType, Prisma } from "generated/prisma/client";
 import { NotificationService } from "../notification/notification.service";
 import { CreateReviewDto } from "../product/dtos/create-review.dto";
 import { ChatService } from "../chat/chat.service";
 import { assertEntityExists } from "src/common/validators/entity-exists.validator";
+import { CurrencyConversionService } from "../currency/currency.service";
+
+type CurrencyFormattingOptions = {
+    convertCurrency?: boolean;
+};
 
 @Injectable()
 export class OrderService {
@@ -17,6 +23,7 @@ export class OrderService {
         private readonly deliveryService: DeliveryService,
         private readonly notificationService: NotificationService,
         private readonly chatService: ChatService,
+        private readonly currencyService: CurrencyConversionService,
     ) {}
 
     async createOrder(userId: number, dto: CreateOrderDto) {
@@ -35,29 +42,31 @@ export class OrderService {
 
         // Calculate totals and verify product existence
         let total = 0;
-        const itemsToCreate: { productId: number; quantity: number; price: number }[] = [];
+        const itemsToCreate: { productId: number; price: number }[] = [];
 
         for (const itemDto of dto.items) {
             const product = productMap.get(itemDto.productId);
             if (!product) {
                 throw new NotFoundException(`Product with ID ${itemDto.productId} not found`);
             }
-            if (product.status === "OUT_OF_STOCK" || product.status === "INACTIVE") {
+            if (product.status !== ProductStatus.ACTIVE) {
                 throw new BadRequestException(`Product ${product.name} is currently unavailable`);
+            }
+            if (product.authentication_status !== AuthenticationStatus.VERIFIED) {
+                throw new BadRequestException(`Product ${product.name} has not been authenticated yet`);
             }
 
             const activePrice = product.discounted_price ?? product.original_price;
-            const lineTotal = activePrice * itemDto.quantity;
-            total += lineTotal;
+            total += activePrice;
 
             itemsToCreate.push({
                 productId: itemDto.productId,
-                quantity: itemDto.quantity,
                 price: activePrice,
             });
         }
 
-        // Create the order inside a database transaction
+        // Create the order inside a database transaction, atomically claiming each
+        // product so two concurrent buyers can never both check out the same unique item.
         return this.prismaService.$transaction(async (tx) => {
             const order = await tx.order.create({
                 data: {
@@ -89,97 +98,77 @@ export class OrderService {
         });
     }
 
+    async getCheckoutSummary(
+        userId: number,
+        dto: CheckoutSummaryQueryDto = {},
+        options: CurrencyFormattingOptions = {},
+    ) {
+        const { cart_id, ...summary } = await this.buildCheckoutSummary(userId, dto);
+        if (options.convertCurrency === false) {
+            return summary;
+        }
+
+        return this.applyCheckoutSummaryCurrency(summary, await this.getUserCurrency(userId));
+    }
+
+    async getCheckoutSummaryForPayment(userId: number, dto: CheckoutSummaryQueryDto = {}) {
+        const { cart_id, ...summary } = await this.buildCheckoutSummary(userId, dto);
+        return summary;
+    }
+
+    async applyCoupon(userId: number, dto: ApplyCouponDto) {
+        const summary = dto.productId
+            ? await this.getBuyNowCheckoutSummary(userId, {
+                  productId: dto.productId,
+                  addressId: dto.addressId,
+                  country: dto.country,
+                  couponCode: dto.couponCode,
+              })
+            : await this.getCheckoutSummary(userId, dto);
+        return {
+            valid: true,
+            message: summary.coupon?.message ?? "Coupon applied successfully.",
+            coupon: summary.coupon,
+            price_details: summary.price_details,
+        };
+    }
+
     async checkoutFromCart(userId: number, dto: CheckoutDto) {
-        // 1. Fetch user's cart with items, products, seller details, delivery option, and variant
-        const cart = await this.prismaService.cart.findUnique({
-            where: { userId },
-            include: {
-                cartItems: {
-                    include: {
-                        product: {
-                            include: {
-                                user: {
-                                    select: {
-                                        id: true,
-                                        profile: { select: { country: true } },
-                                        delivery_option: true,
-                                        stripe_onboarding_complete: true,
-                                    },
-                                },
-                            },
-                        },
-                        variant: true,
-                    },
-                },
-            },
+        if (dto.acceptedTerms === false) {
+            throw new BadRequestException("You must agree to the Terms & Conditions and Privacy Policy before checkout.");
+        }
+
+        const checkoutAddress = await this.resolveCheckoutAddress(userId, dto);
+        const summary = await this.buildCheckoutSummary(userId, {
+            sellerIds: dto.sellerIds,
+            cartItemIds: dto.cartItemIds,
+            addressId: dto.addressId,
+            country: checkoutAddress.country ?? undefined,
+            couponCode: dto.couponCode,
         });
-
-        if (!cart || cart.cartItems.length === 0) {
-            throw new BadRequestException("Cart is empty");
-        }
-
-        // 2. Validate items are ACTIVE and sellers have completed Stripe onboarding
-        for (const item of cart.cartItems) {
-            if (item.product.status !== "ACTIVE") {
-                throw new BadRequestException(`Product ${item.product.name} is not active`);
-            }
-            if (!item.product.user.stripe_onboarding_complete) {
-                throw new ForbiddenException(`Seller of product ${item.product.name} has not completed payment setup.`);
-            }
-        }
-
-        // 3. Group by seller
-        const sellerGroups = new Map<number, typeof cart.cartItems>();
-        for (const item of cart.cartItems) {
-            const sellerId = item.product.userId;
-            if (!sellerGroups.has(sellerId)) {
-                sellerGroups.set(sellerId, []);
-            }
-            sellerGroups.get(sellerId)!.push(item);
-        }
 
         const createdOrders: any[] = [];
 
-        // 4. Create orders in a transaction
         await this.prismaService.$transaction(async (tx) => {
-            for (const [sellerId, items] of sellerGroups) {
-                const seller = items[0].product.user;
-                const sellerCountry = seller.profile?.country ?? null;
-
-                // Resolve delivery
-                const delivery = this.deliveryService.resolveDelivery(
-                    seller.delivery_option,
-                    dto.country,
-                    sellerCountry,
-                );
-
-                const subtotal = items.reduce((sum, item) => {
-                    const price = item.product.discounted_price ?? item.product.original_price;
-                    return sum + price * item.quantity;
-                }, 0);
-
-                const total = subtotal + delivery.cost;
-
+            for (const group of summary.seller_groups) {
                 const order = await tx.order.create({
                     data: {
                         userId,
-                        sellerId,
+                        sellerId: group.seller.id,
                         status: OrderStatus.PENDING,
-                        total,
-                        delivery_partner: delivery.partner,
-                        delivery_cost: delivery.cost,
-                        delivery_days_min: delivery.days_min,
-                        delivery_days_max: delivery.days_max,
-                        shippingAddress: dto.shippingAddress,
-                        city: dto.city,
-                        postalCode: dto.postalCode,
-                        country: dto.country,
+                        total: group.total,
+                        delivery_partner: group.delivery.partner,
+                        delivery_cost: group.delivery.cost,
+                        delivery_days_min: group.delivery.days_min,
+                        delivery_days_max: group.delivery.days_max,
+                        shippingAddress: checkoutAddress.shippingAddress,
+                        city: checkoutAddress.city,
+                        postalCode: checkoutAddress.postalCode,
+                        country: checkoutAddress.country,
                         items: {
-                            create: items.map((item) => ({
+                            create: group.items.map((item) => ({
                                 productId: item.productId,
-                                variantId: item.variantId,
-                                quantity: item.quantity,
-                                price: item.product.discounted_price ?? item.product.original_price,
+                                price: item.price,
                             })),
                         },
                     },
@@ -191,9 +180,16 @@ export class OrderService {
                 createdOrders.push(order);
             }
 
-            // 5. Clear the cart
+            if (summary.coupon) {
+                await tx.coupon.update({
+                    where: { id: summary.coupon.id },
+                    data: { used_count: { increment: 1 } },
+                });
+            }
+
+            const checkedOutCartItemIds = summary.seller_groups.flatMap((group) => group.items.map((item) => item.id));
             await tx.cartItem.deleteMany({
-                where: { cartId: cart.id },
+                where: { cartId: summary.cart_id, id: { in: checkedOutCartItemIds } },
             });
         });
 
@@ -218,6 +214,119 @@ export class OrderService {
         }
 
         return { orders: createdOrders };
+    }
+
+    async getBuyNowCheckoutSummary(userId: number, dto: BuyNowCheckoutSummaryDto) {
+        const summary = await this.buildBuyNowCheckoutSummary(userId, dto);
+        return this.applyCheckoutSummaryCurrency(summary, await this.getUserCurrency(userId));
+    }
+
+    async getBuyNowCheckoutSummaryForPayment(userId: number, dto: BuyNowCheckoutSummaryDto) {
+        return this.buildBuyNowCheckoutSummary(userId, dto);
+    }
+
+    async checkoutBuyNow(
+        userId: number,
+        dto: Omit<CreateBuyNowCheckoutSessionDto, "successUrl" | "cancelUrl"> & { stripeCheckoutSessionId?: string },
+    ) {
+        if (dto.acceptedTerms === false) {
+            throw new BadRequestException("You must agree to the Terms & Conditions and Privacy Policy before checkout.");
+        }
+
+        if (dto.stripeCheckoutSessionId) {
+            const existingOrder = await this.prismaService.order.findUnique({
+                where: { stripe_checkout_session_id: dto.stripeCheckoutSessionId },
+                include: { items: true },
+            });
+
+            if (existingOrder) {
+                return { orders: [existingOrder], already_processed: true };
+            }
+        }
+
+        const checkoutAddress = await this.resolveCheckoutAddress(userId, dto);
+        const summary = await this.buildBuyNowCheckoutSummary(userId, {
+            productId: dto.productId,
+            addressId: dto.addressId,
+            shippingAddress: checkoutAddress.shippingAddress ?? undefined,
+            city: checkoutAddress.city ?? undefined,
+            postalCode: checkoutAddress.postalCode ?? undefined,
+            country: checkoutAddress.country ?? undefined,
+        });
+        const group = summary.seller_groups[0];
+        const item = group.items[0];
+        if (!group.delivery || group.total === null || group.delivery_cost === null) {
+            throw new BadRequestException("Select a shipping address before checkout.");
+        }
+        const delivery = group.delivery;
+        const total = group.total;
+        const deliveryCost = group.delivery_cost;
+
+        let order: any;
+        try {
+            order = await this.prismaService.$transaction(async (tx) => {
+                const createdOrder = await tx.order.create({
+                    data: {
+                        userId,
+                        sellerId: group.seller.id,
+                        status: OrderStatus.PENDING,
+                        total,
+                        delivery_partner: delivery.partner,
+                        delivery_cost: deliveryCost,
+                        delivery_days_min: delivery.days_min,
+                        delivery_days_max: delivery.days_max,
+                        shippingAddress: checkoutAddress.shippingAddress,
+                        city: checkoutAddress.city,
+                        postalCode: checkoutAddress.postalCode,
+                        country: checkoutAddress.country,
+                        stripe_checkout_session_id: dto.stripeCheckoutSessionId,
+                        items: {
+                            create: {
+                                productId: item.productId,
+                                price: item.price,
+                            },
+                        },
+                    },
+                    include: {
+                        items: true,
+                    },
+                });
+
+                return createdOrder;
+            });
+        } catch (err) {
+            if (dto.stripeCheckoutSessionId && (err as any)?.code === "P2002") {
+                const existingOrder = await this.prismaService.order.findUnique({
+                    where: { stripe_checkout_session_id: dto.stripeCheckoutSessionId },
+                    include: { items: true },
+                });
+
+                if (existingOrder) {
+                    return { orders: [existingOrder], already_processed: true };
+                }
+            }
+
+            throw err;
+        }
+
+        try {
+            await this.notificationService.create(
+                order.userId,
+                "Order Placed",
+                `Your order #${order.id} has been placed successfully.`,
+                NotificationType.ORDER,
+            );
+            await this.notificationService.create(
+                order.sellerId,
+                "New Order Received",
+                `You have received a new order #${order.id}.`,
+                NotificationType.ORDER,
+            );
+        } catch (e) {
+            console.error("Failed to send order notification", e);
+        }
+
+        return { orders: [order] };
     }
 
     async findAllUserOrders(userId: number, query: OrderQueryDto) {
@@ -257,8 +366,10 @@ export class OrderService {
             this.prismaService.order.count({ where: whereClause }),
         ]);
 
+        const userCurrency = await this.getUserCurrency(userId);
+
         return {
-            data: data.map((order) => this.formatOrderCard(order)),
+            data: await Promise.all(data.map((order) => this.formatOrderCard(order, userCurrency))),
             meta: {
                 total,
                 page,
@@ -295,7 +406,6 @@ export class OrderService {
                     items: {
                         include: {
                             product: { select: { id: true, name: true, image_urls: true } },
-                            variant: true,
                         },
                     },
                 },
@@ -306,8 +416,76 @@ export class OrderService {
             this.prismaService.order.count({ where: whereClause }),
         ]);
 
+        const userCurrency = await this.getUserCurrency(sellerId);
+
         return {
-            data: data.map((order) => this.formatSellerOrderCard(order)),
+            data: await Promise.all(data.map((order) => this.formatSellerOrderCard(order, userCurrency))),
+            meta: {
+                total,
+                page,
+                limit,
+                pages: Math.ceil(total / limit),
+            },
+        };
+    }
+
+    async findSellerOrdersByProduct(productId: number, sellerId: number, query: OrderQueryDto) {
+        const { page = 1, limit = 10, status, sellerTab } = query;
+        const skip = (page - 1) * limit;
+
+        const product = await this.prismaService.product.findUnique({
+            where: { id: productId },
+            select: { id: true, name: true, image_urls: true, userId: true },
+        });
+
+        if (!product) {
+            throw new NotFoundException(`Product with ID ${productId} not found`);
+        }
+
+        if (product.userId !== sellerId) {
+            throw new ForbiddenException("You do not have permission to access orders for this product");
+        }
+
+        const whereClause: any = {
+            sellerId,
+            items: { some: { productId } },
+        };
+        if (status) {
+            whereClause.status = status;
+        } else if (sellerTab) {
+            whereClause.status = { in: this.getStatusesForSellerTab(sellerTab) };
+        }
+
+        const [data, total] = await Promise.all([
+            this.prismaService.order.findMany({
+                where: whereClause,
+                skip,
+                take: limit,
+                include: {
+                    user: {
+                        select: {
+                            id: true,
+                            email: true,
+                            profile: { select: { full_name: true, avatar_url: true, phone: true } },
+                        },
+                    },
+                    items: {
+                        include: {
+                            product: { select: { id: true, name: true, image_urls: true } },
+                        },
+                    },
+                },
+                orderBy: {
+                    createdAt: "desc",
+                },
+            }),
+            this.prismaService.order.count({ where: whereClause }),
+        ]);
+
+        const userCurrency = await this.getUserCurrency(sellerId);
+
+        return {
+            data: await Promise.all(data.map((order) => this.formatSellerOrderCardForProduct(order, productId, userCurrency))),
             meta: {
                 total,
                 page,
@@ -331,7 +509,8 @@ export class OrderService {
             throw new ForbiddenException("You do not have permission to access this order");
         }
 
-        return this.formatOrderDetail(order);
+        const currency = userId ? await this.getUserCurrency(userId) : CurrencyPreference.USD;
+        return this.formatOrderDetail(order, currency);
     }
 
     async findSellerOrderById(orderId: number, sellerId: number) {
@@ -348,7 +527,7 @@ export class OrderService {
             throw new ForbiddenException("You do not have permission to access this order");
         }
 
-        return this.formatSellerOrderDetail(order);
+        return this.formatSellerOrderDetail(order, await this.getUserCurrency(sellerId));
     }
 
     async findOrCreateOrderChat(orderId: number, userId: number) {
@@ -371,16 +550,22 @@ export class OrderService {
             throw new BadRequestException(`Order cannot be cancelled in its current status: ${order.status}`);
         }
 
-        const updated = await this.prismaService.order.update({
-            where: { id: orderId },
-            data: {
-                status: OrderStatus.CANCELLED,
-                cancelled_at: new Date(),
-                cancelled_by_user_id: userId,
-                cancelled_by_actor: OrderCancellationActor.BUYER,
-                cancellation_reason: reason,
-            },
-            include: this.getOrderDetailInclude(),
+        const updated = await this.prismaService.$transaction(async (tx) => {
+            const cancelled = await tx.order.update({
+                where: { id: orderId },
+                data: {
+                    status: OrderStatus.CANCELLED,
+                    cancelled_at: new Date(),
+                    cancelled_by_user_id: userId,
+                    cancelled_by_actor: OrderCancellationActor.BUYER,
+                    cancellation_reason: reason,
+                },
+                include: this.getOrderDetailInclude(),
+            });
+
+            await this.restoreProductsAfterCancellation(tx, cancelled.items.map((item) => item.productId));
+
+            return cancelled;
         });
 
         try {
@@ -394,7 +579,7 @@ export class OrderService {
             console.error("Failed to send cancellation notification", e);
         }
 
-        return this.formatOrderDetail(updated);
+        return this.formatOrderDetail(updated, await this.getUserCurrency(userId));
     }
 
     async reviewOrderItem(userId: number, orderItemId: number, dto: CreateReviewDto) {
@@ -491,20 +676,28 @@ export class OrderService {
             );
         }
 
-        const updated = await this.prismaService.order.update({
-            where: { id: orderId },
-            data: {
-                status,
-                ...this.getOrderTimelineUpdate(status),
-                ...(status === OrderStatus.CANCELLED
-                    ? {
-                          cancelled_at: new Date(),
-                          cancelled_by_user_id: sellerId,
-                          cancelled_by_actor: OrderCancellationActor.SELLER,
-                      }
-                    : {}),
-            },
-            include: this.getOrderDetailInclude(),
+        const updated = await this.prismaService.$transaction(async (tx) => {
+            const result = await tx.order.update({
+                where: { id: orderId },
+                data: {
+                    status,
+                    ...this.getOrderTimelineUpdate(status),
+                    ...(status === OrderStatus.CANCELLED
+                        ? {
+                              cancelled_at: new Date(),
+                              cancelled_by_user_id: sellerId,
+                              cancelled_by_actor: OrderCancellationActor.SELLER,
+                          }
+                        : {}),
+                },
+                include: this.getOrderDetailInclude(),
+            });
+
+            if (status === OrderStatus.CANCELLED) {
+                await this.restoreProductsAfterCancellation(tx, result.items.map((item) => item.productId));
+            }
+
+            return result;
         });
 
         // Notify buyer
@@ -519,7 +712,7 @@ export class OrderService {
             console.error("Failed to send status update notification", e);
         }
 
-        return this.formatSellerOrderDetail(updated);
+        return this.formatSellerOrderDetail(updated, await this.getUserCurrency(sellerId));
     }
 
     async findAllOrdersAdmin(query: OrderQueryDto) {
@@ -563,19 +756,27 @@ export class OrderService {
             throw new NotFoundException(`Order with ID ${orderId} not found`);
         }
 
-        const updated = await this.prismaService.order.update({
-            where: { id: orderId },
-            data: {
-                status,
-                ...this.getOrderTimelineUpdate(status),
-                ...(status === OrderStatus.CANCELLED
-                    ? {
-                          cancelled_at: new Date(),
-                          cancelled_by_actor: OrderCancellationActor.ADMIN,
-                      }
-                    : {}),
-            },
-            include: this.getOrderDetailInclude(),
+        const updated = await this.prismaService.$transaction(async (tx) => {
+            const result = await tx.order.update({
+                where: { id: orderId },
+                data: {
+                    status,
+                    ...this.getOrderTimelineUpdate(status),
+                    ...(status === OrderStatus.CANCELLED
+                        ? {
+                              cancelled_at: new Date(),
+                              cancelled_by_actor: OrderCancellationActor.ADMIN,
+                          }
+                        : {}),
+                },
+                include: this.getOrderDetailInclude(),
+            });
+
+            if (status === OrderStatus.CANCELLED) {
+                await this.restoreProductsAfterCancellation(tx, result.items.map((item) => item.productId));
+            }
+
+            return result;
         });
 
         // Notify buyer and seller
@@ -597,6 +798,815 @@ export class OrderService {
         }
 
         return updated;
+    }
+
+    private async buildBuyNowCheckoutSummary(
+        userId: number,
+        dto: {
+            productId: number;
+            addressId?: number;
+            shippingAddress?: string;
+            city?: string;
+            postalCode?: string;
+            country?: string;
+            couponCode?: string;
+        },
+    ) {
+        const user = await this.prismaService.baseUser.findUnique({
+            where: { id: userId },
+            include: {
+                addresses: { orderBy: [{ is_default: "desc" }, { createdAt: "desc" }] },
+            },
+        });
+
+        if (!user) {
+            throw new NotFoundException("User not found");
+        }
+
+        // const checkoutAddress = await this.resolveCheckoutAddress(userId, dto);
+        const product = await this.prismaService.product.findUnique({
+            where: { id: dto.productId },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        email: true,
+                        profile: { select: { full_name: true, avatar_url: true, country: true } },
+                        delivery_option: true,
+                        stripe_onboarding_complete: true,
+                    },
+                },
+            },
+        });
+
+        if (!product) {
+            throw new NotFoundException(`Product with ID ${dto.productId} not found`);
+        }
+
+        if (product.status !== ProductStatus.ACTIVE) {
+            throw new BadRequestException(`Product ${product.name} is not active`);
+        }
+
+        if (product.authentication_status !== AuthenticationStatus.VERIFIED) {
+            throw new BadRequestException(`Product ${product.name} has not been authenticated yet`);
+        }
+
+        if (!product.user.stripe_onboarding_complete) {
+            throw new ForbiddenException(`Seller of product ${product.name} has not completed payment setup.`);
+        }
+
+        if (product.userId === userId) {
+            throw new BadRequestException("You cannot buy your own product.");
+        }
+
+        const sellerCountry = product.user.profile?.country ?? null;
+        const delivery = this.deliveryService.resolveDelivery(
+            product.user.delivery_option,
+            // checkoutAddress?.country ?? null,
+            null,
+            sellerCountry,
+        );
+        const unitPrice = this.roundMoney(product.discounted_price ?? product.original_price);
+        const subtotal = unitPrice;
+        const shippingFee = this.roundMoney(delivery.cost);
+        const couponItem = { product, productId: product.id };
+        const coupon = dto.couponCode
+            ? await this.validateCouponForCart(dto.couponCode, [couponItem])
+            : null;
+        const discountAmount = coupon?.discount_amount ?? 0;
+        const total = this.roundMoney(subtotal + shippingFee - discountAmount);
+
+        return {
+            selected_seller_ids: [product.userId],
+            cart_item_count: 1,
+            seller_groups: [
+                {
+                    seller: {
+                        id: product.userId,
+                        email: product.user.email,
+                        name: product.user.profile?.full_name ?? product.user.email,
+                        avatar_url: product.user.profile?.avatar_url ?? null,
+                        country: sellerCountry,
+                    },
+                    delivery: {
+                        type: delivery.type,
+                        partner: delivery.partner,
+                        cost: shippingFee,
+                        days_min: delivery.days_min,
+                        days_max: delivery.days_max,
+                    },
+                    items: [
+                        {
+                            id: null,
+                            productId: product.id,
+                            price: unitPrice,
+                            line_total: subtotal,
+                            product: {
+                                id: product.id,
+                                name: product.name,
+                                image_urls: product.image_urls,
+                                image_url: product.image_urls?.[0] ?? null,
+                                categoryId: product.categoryId,
+                                subCategoryId: product.subCategoryId,
+                            },
+                        },
+                    ],
+                    subtotal,
+                    delivery_cost: shippingFee,
+                    discount_amount: discountAmount,
+                    total,
+                },
+            ],
+            addresses: user.addresses,
+            // selected_address: checkoutAddress,
+            requires_address_selection: false,
+            coupon: coupon
+                ? {
+                      id: coupon.id,
+                      code: coupon.code,
+                      discount_type: coupon.discount_type,
+                      discount_value: coupon.discount_value,
+                      discount_amount: coupon.discount_amount,
+                      message: coupon.message,
+                  }
+                : null,
+            price_details: {
+                subtotal,
+                shipping_fee: shippingFee,
+                discount: discountAmount,
+                total,
+            },
+            terms_required: true,
+            payment: {
+                provider: "stripe",
+                next_action: "create_buy_now_checkout_session",
+            },
+        };
+    }
+
+    private async buildCheckoutSummary(
+        userId: number,
+        dto: { sellerIds?: number[]; cartItemIds?: number[]; addressId?: number; country?: string; couponCode?: string } = {},
+    ) {
+        const user = await this.prismaService.baseUser.findUnique({
+            where: { id: userId },
+            include: {
+                profile: { select: { country: true } },
+                addresses: { orderBy: [{ is_default: "desc" }, { createdAt: "desc" }] },
+            },
+        });
+
+        if (!user) {
+            throw new NotFoundException("User not found");
+        }
+
+        const selectedAddress = dto.addressId
+            ? user.addresses.find((address) => address.id === dto.addressId)
+            : user.addresses.find((address) => address.is_default) ?? user.addresses[0] ?? null;
+
+        if (dto.addressId && !selectedAddress) {
+            throw new NotFoundException("Address not found");
+        }
+
+        const buyerCountry = selectedAddress?.country ?? dto.country ?? user.profile?.country ?? null;
+
+        const cart = await this.prismaService.cart.findUnique({
+            where: { userId },
+            include: {
+                cartItems: {
+                    include: {
+                        product: {
+                            include: {
+                                user: {
+                                    select: {
+                                        id: true,
+                                        email: true,
+                                        profile: { select: { full_name: true, avatar_url: true, country: true } },
+                                        delivery_option: true,
+                                        stripe_onboarding_complete: true,
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        if (!cart || cart.cartItems.length === 0) {
+            throw new BadRequestException("Cart is empty");
+        }
+
+        const selectedSellerIds = this.normalizePositiveIntegerIds(dto.sellerIds);
+        const selectedCartItemIds = this.normalizePositiveIntegerIds(dto.cartItemIds);
+        if (selectedSellerIds.length && selectedCartItemIds.length) {
+            throw new BadRequestException("Use either sellerIds or cartItemIds, not both.");
+        }
+
+        const checkoutItems = selectedCartItemIds.length
+            ? cart.cartItems.filter((item) => selectedCartItemIds.includes(item.id))
+            : selectedSellerIds.length
+              ? cart.cartItems.filter((item) => selectedSellerIds.includes(item.product.userId))
+              : cart.cartItems;
+
+        if (checkoutItems.length === 0) {
+            throw new BadRequestException(
+                selectedCartItemIds.length
+                    ? "No cart items found for the selected products."
+                    : "No cart items found for the selected seller.",
+            );
+        }
+
+        if (selectedCartItemIds.length && checkoutItems.length !== selectedCartItemIds.length) {
+            throw new BadRequestException("One or more selected cart items were not found in your cart.");
+        }
+
+        for (const item of checkoutItems) {
+            if (item.product.status !== ProductStatus.ACTIVE) {
+                throw new BadRequestException(`Product ${item.product.name} is not active`);
+            }
+            if (item.product.authentication_status !== AuthenticationStatus.VERIFIED) {
+                throw new BadRequestException(`Product ${item.product.name} has not been authenticated yet`);
+            }
+            if (item.product.userId === userId) {
+                throw new BadRequestException(`You cannot checkout your own product: ${item.product.name}`);
+            }
+            if (!item.product.user.stripe_onboarding_complete) {
+                throw new ForbiddenException(`Seller of product ${item.product.name} has not completed payment setup.`);
+            }
+        }
+
+        const coupon = dto.couponCode
+            ? await this.validateCouponForCart(dto.couponCode, checkoutItems)
+            : null;
+
+        const sellerMap = new Map<number, typeof checkoutItems>();
+        for (const item of checkoutItems) {
+            const sellerId = item.product.userId;
+            if (!sellerMap.has(sellerId)) {
+                sellerMap.set(sellerId, []);
+            }
+            sellerMap.get(sellerId)!.push(item);
+        }
+
+        const groups = Array.from(sellerMap.entries()).map(([sellerId, items]) => {
+            const seller = items[0].product.user;
+            const sellerCountry = seller.profile?.country ?? null;
+            const delivery = this.deliveryService.resolveDelivery(
+                seller.delivery_option,
+                buyerCountry,
+                sellerCountry,
+            );
+            const subtotal = this.roundMoney(
+                items.reduce((sum, item) => sum + this.getCartItemUnitPrice(item), 0),
+            );
+            const eligible_subtotal = coupon
+                ? this.roundMoney(
+                      items
+                          .filter((item) => this.isCouponApplicableToItem(coupon, item))
+                          .reduce((sum, item) => sum + this.getCartItemUnitPrice(item), 0),
+                  )
+                : 0;
+
+            return {
+                seller: {
+                    id: sellerId,
+                    email: seller.email,
+                    name: seller.profile?.full_name ?? seller.email,
+                    avatar_url: seller.profile?.avatar_url ?? null,
+                    country: sellerCountry,
+                },
+                delivery: {
+                    type: delivery.type,
+                    partner: delivery.partner,
+                    cost: this.roundMoney(delivery.cost),
+                    days_min: delivery.days_min,
+                    days_max: delivery.days_max,
+                },
+                items: items.map((item) => ({
+                    id: item.id,
+                    productId: item.productId,
+                    price: this.getCartItemUnitPrice(item),
+                    line_total: this.getCartItemUnitPrice(item),
+                    product: {
+                        id: item.product.id,
+                        name: item.product.name,
+                        image_urls: item.product.image_urls,
+                        image_url: item.product.image_urls?.[0] ?? null,
+                        categoryId: item.product.categoryId,
+                        subCategoryId: item.product.subCategoryId,
+                    },
+                })),
+                subtotal,
+                delivery_cost: this.roundMoney(delivery.cost),
+                eligible_subtotal,
+                discount_amount: 0,
+                total: 0,
+            };
+        });
+
+        const subtotal = this.roundMoney(groups.reduce((sum, group) => sum + group.subtotal, 0));
+        const shippingFee = this.roundMoney(groups.reduce((sum, group) => sum + group.delivery_cost, 0));
+        const discountAmount = coupon?.discount_amount ?? 0;
+
+        for (const group of groups) {
+            group.discount_amount = coupon?.eligible_subtotal
+                ? this.roundMoney(discountAmount * (group.eligible_subtotal / coupon.eligible_subtotal))
+                : 0;
+            group.total = this.roundMoney(group.subtotal + group.delivery_cost - group.discount_amount);
+        }
+
+        const total = this.roundMoney(groups.reduce((sum, group) => sum + group.total, 0));
+
+        return {
+            cart_id: cart.id,
+            selected_seller_ids: Array.from(sellerMap.keys()),
+            selected_cart_item_ids: checkoutItems.map((item) => item.id),
+            cart_item_count: checkoutItems.length,
+            seller_groups: groups.map(({ eligible_subtotal, ...group }) => group),
+            addresses: user.addresses,
+            selected_address: selectedAddress,
+            coupon: coupon
+                ? {
+                      id: coupon.id,
+                      code: coupon.code,
+                      discount_type: coupon.discount_type,
+                      discount_value: coupon.discount_value,
+                      discount_amount: coupon.discount_amount,
+                      message: coupon.message,
+                  }
+                : null,
+            price_details: {
+                subtotal,
+                shipping_fee: shippingFee,
+                discount: discountAmount,
+                total,
+            },
+            terms_required: true,
+            payment: {
+                provider: "stripe",
+                next_action: "create_checkout_session",
+            },
+        };
+    }
+
+    private async validateCouponForCart(couponCode: string, cartItems: any[]) {
+        const normalizedCode = couponCode.trim();
+        const coupon = await this.prismaService.coupon.findFirst({
+            where: { code: { equals: normalizedCode, mode: "insensitive" } } as any,
+        });
+
+        if (!coupon) {
+            throw new BadRequestException("Invalid coupon code. Please try again.");
+        }
+
+        const now = new Date();
+        if (!coupon.is_active || coupon.start_date > now || coupon.end_date < now) {
+            throw new BadRequestException("Invalid coupon code. Please try again.");
+        }
+
+        if (
+            coupon.usage_type === CouponUsageType.LIMITED &&
+            coupon.usage_limit !== null &&
+            coupon.used_count >= coupon.usage_limit
+        ) {
+            throw new BadRequestException("Coupon usage limit has been reached.");
+        }
+
+        const eligibleSubtotal = this.roundMoney(
+            cartItems
+                .filter((item) => this.isCouponApplicableToItem(coupon, item))
+                .reduce((sum, item) => sum + this.getCartItemUnitPrice(item), 0),
+        );
+
+        if (eligibleSubtotal <= 0) {
+            throw new BadRequestException("This coupon is not applicable to the current cart.");
+        }
+
+        const discountAmount =
+            coupon.discount_type === CouponDiscountType.PERCENTAGE
+                ? this.roundMoney((eligibleSubtotal * coupon.discount_value) / 100)
+                : this.roundMoney(Math.min(coupon.discount_value, eligibleSubtotal));
+
+        return {
+            ...coupon,
+            eligible_subtotal: eligibleSubtotal,
+            discount_amount: Math.min(discountAmount, eligibleSubtotal),
+            message:
+                coupon.discount_type === CouponDiscountType.PERCENTAGE
+                    ? `${coupon.discount_value}% discount applied to your order.`
+                    : `${coupon.discount_value} discount applied to your order.`,
+        };
+    }
+
+    private isCouponApplicableToItem(
+        coupon: { categoryId?: number | null; subCategoryId?: number | null },
+        item: any,
+    ) {
+        if (coupon.categoryId && item.product.categoryId !== coupon.categoryId) {
+            return false;
+        }
+        if (coupon.subCategoryId && item.product.subCategoryId !== coupon.subCategoryId) {
+            return false;
+        }
+        return true;
+    }
+
+    private getCartItemUnitPrice(item: any) {
+        return this.roundMoney(item.product.discounted_price ?? item.product.original_price);
+    }
+
+    private normalizePositiveIntegerIds(ids?: number[]) {
+        return [...new Set((ids ?? []).map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+    }
+
+    private async resolveCheckoutAddress(userId: number, dto: CheckoutDto) {
+        if (dto.addressId) {
+            const address = await this.prismaService.userAddress.findFirst({
+                where: { id: dto.addressId, userId },
+            });
+
+            if (!address) {
+                throw new NotFoundException("Address not found");
+            }
+
+            return {
+                shippingAddress: address.address,
+                city: address.city,
+                postalCode: address.postal_code,
+                country: address.country,
+            };
+        }
+
+        if (!dto.shippingAddress || !dto.city || !dto.country) {
+            throw new BadRequestException("Provide either addressId or shippingAddress, city, and country.");
+        }
+
+        return {
+            shippingAddress: dto.shippingAddress,
+            city: dto.city,
+            postalCode: dto.postalCode,
+            country: dto.country,
+        };
+    }
+
+    private roundMoney(value: number) {
+        return Math.round((value + Number.EPSILON) * 100) / 100;
+    }
+
+    private async getUserCurrency(userId: number): Promise<CurrencyPreference> {
+        const user = await this.prismaService.baseUser.findUnique({
+            where: { id: userId },
+            select: { currency_preference: true },
+        });
+
+        return user?.currency_preference ?? CurrencyPreference.USD;
+    }
+
+    private async convertUsdAmount(amount: number | null | undefined, currency: CurrencyPreference) {
+        if (amount === null || amount === undefined) {
+            return amount;
+        }
+
+        if (currency === CurrencyPreference.USD) {
+            return this.roundMoney(amount);
+        }
+
+        return this.currencyService.convertAsync(amount, CurrencyPreference.USD, currency);
+    }
+
+    private async applyCheckoutSummaryCurrency(summary: any, currency: CurrencyPreference) {
+        if (currency === CurrencyPreference.USD) {
+            return {
+                ...summary,
+                currency,
+                base_currency: CurrencyPreference.USD,
+            };
+        }
+
+        const sellerGroups = await Promise.all(
+            summary.seller_groups.map(async (group: any) => {
+                const deliveryCost = await this.convertUsdAmount(group.delivery?.cost, currency);
+                const items = await Promise.all(
+                    group.items.map(async (item: any) => {
+                        const price = await this.convertUsdAmount(item.price, currency);
+                        return {
+                            ...item,
+                            price,
+                            line_total: await this.convertUsdAmount(item.line_total, currency),
+                        };
+                    }),
+                );
+
+                return {
+                    ...group,
+                    delivery: group.delivery
+                        ? {
+                              ...group.delivery,
+                              cost: deliveryCost,
+                          }
+                        : group.delivery,
+                    items,
+                    subtotal: await this.convertUsdAmount(group.subtotal, currency),
+                    delivery_cost: await this.convertUsdAmount(group.delivery_cost, currency),
+                    discount_amount: await this.convertUsdAmount(group.discount_amount, currency),
+                    total: await this.convertUsdAmount(group.total, currency),
+                };
+            }),
+        );
+
+        return {
+            ...summary,
+            seller_groups: sellerGroups,
+            coupon: summary.coupon
+                ? {
+                      ...summary.coupon,
+                      discount_amount: await this.convertUsdAmount(summary.coupon.discount_amount, currency),
+                  }
+                : null,
+            price_details: {
+                ...summary.price_details,
+                subtotal: await this.convertUsdAmount(summary.price_details?.subtotal, currency),
+                shipping_fee: await this.convertUsdAmount(summary.price_details?.shipping_fee, currency),
+                discount: await this.convertUsdAmount(summary.price_details?.discount, currency),
+                total: await this.convertUsdAmount(summary.price_details?.total, currency),
+            },
+            currency,
+            base_currency: CurrencyPreference.USD,
+        };
+    }
+
+    /**
+     * Create pending orders for cart checkout (before Stripe session is created).
+     * Does NOT delete cart items — those are deleted only on webhook payment success.
+     */
+    async createPendingCartOrders(userId: number, dto: CheckoutDto) {
+        const checkoutAddress = await this.resolveCheckoutAddress(userId, dto);
+        const summary = await this.buildCheckoutSummary(userId, {
+            sellerIds: dto.sellerIds,
+            cartItemIds: dto.cartItemIds,
+            addressId: dto.addressId,
+            country: checkoutAddress.country ?? undefined,
+            couponCode: dto.couponCode,
+        });
+
+        const createdOrders: any[] = [];
+
+        await this.prismaService.$transaction(async (tx) => {
+            for (const group of summary.seller_groups) {
+                const order = await tx.order.create({
+                    data: {
+                        userId,
+                        sellerId: group.seller.id,
+                        status: OrderStatus.PENDING,
+                        total: group.total,
+                        delivery_partner: group.delivery.partner,
+                        delivery_cost: group.delivery.cost,
+                        delivery_days_min: group.delivery.days_min,
+                        delivery_days_max: group.delivery.days_max,
+                        shippingAddress: checkoutAddress.shippingAddress,
+                        city: checkoutAddress.city,
+                        postalCode: checkoutAddress.postalCode,
+                        country: checkoutAddress.country,
+                        items: {
+                            create: group.items.map((item) => ({
+                                productId: item.productId,
+                                price: item.price,
+                            })),
+                        },
+                    },
+                    include: { items: true },
+                });
+                createdOrders.push(order);
+            }
+        });
+
+        return {
+            orders: createdOrders,
+            cart_id: summary.cart_id,
+            cart_item_ids: summary.selected_cart_item_ids,
+            coupon_id: summary.coupon?.id,
+        };
+    }
+
+    /**
+     * Create a pending buy-now order (before Stripe session is created).
+     */
+    async createPendingBuyNowOrder(
+        userId: number,
+        dto: Omit<CreateBuyNowCheckoutSessionDto, "successUrl" | "cancelUrl">,
+    ) {
+        const checkoutAddress = await this.resolveCheckoutAddress(userId, dto);
+        const summary = await this.buildBuyNowCheckoutSummary(userId, {
+            productId: dto.productId,
+            addressId: dto.addressId,
+            shippingAddress: checkoutAddress.shippingAddress ?? undefined,
+            city: checkoutAddress.city ?? undefined,
+            postalCode: checkoutAddress.postalCode ?? undefined,
+            country: checkoutAddress.country ?? undefined,
+            couponCode: dto.couponCode,
+        });
+
+        const group = summary.seller_groups[0];
+        const item = group.items[0];
+
+        if (!group.delivery || group.total === null || group.delivery_cost === null) {
+            throw new BadRequestException("Select a shipping address before checkout.");
+        }
+
+        const order = await this.prismaService.$transaction(async (tx) => {
+            const createdOrder = await tx.order.create({
+                data: {
+                    userId,
+                    sellerId: group.seller.id,
+                    status: OrderStatus.PENDING,
+                    total: group.total,
+                    delivery_partner: group.delivery.partner,
+                    delivery_cost: group.delivery_cost,
+                    delivery_days_min: group.delivery.days_min,
+                    delivery_days_max: group.delivery.days_max,
+                    shippingAddress: checkoutAddress.shippingAddress,
+                    city: checkoutAddress.city,
+                    postalCode: checkoutAddress.postalCode,
+                    country: checkoutAddress.country,
+                    items: {
+                        create: {
+                            productId: item.productId,
+                            price: item.price,
+                        },
+                    },
+                },
+                include: { items: true },
+            });
+            return createdOrder;
+        });
+
+        return { order, coupon_id: summary.coupon?.id };
+    }
+
+    /**
+     * Confirm a pending order (transition from PENDING to CONFIRMED).
+     * Called by the Stripe webhook after payment is verified.
+     * Only sets stripe_checkout_session_id for buy-now orders (where there's 1:1 mapping).
+     * For cart orders, session ID is in the payment transaction.
+     */
+    async confirmOrder(orderId: number, stripeCheckoutSessionId?: string, isBuyNow = false) {
+        const existing = await this.prismaService.order.findUnique({
+            where: { id: orderId },
+            select: { id: true, status: true },
+        });
+
+        if (existing?.status === OrderStatus.CONFIRMED) {
+            return existing;
+        }
+
+        const timelineUpdate = this.getOrderTimelineUpdate(OrderStatus.CONFIRMED);
+
+        // Only set stripe_checkout_session_id for buy-now orders to avoid unique constraint violation
+        const updateData: any = {
+            status: OrderStatus.CONFIRMED,
+            ...timelineUpdate,
+        };
+
+        if (isBuyNow && stripeCheckoutSessionId) {
+            updateData.stripe_checkout_session_id = stripeCheckoutSessionId;
+        }
+
+        const confirmed = await this.prismaService.order.update({
+            where: { id: orderId },
+            data: updateData,
+            include: { items: true },
+        });
+
+        return confirmed;
+    }
+
+    async finalizePaidOrders(params: {
+        orderIds: number[];
+        cartId?: number;
+        cartItemIds?: number[];
+        couponId?: number;
+    }) {
+        const orderIds = [...new Set(params.orderIds.filter((id) => Number.isInteger(id) && id > 0))];
+        if (!orderIds.length) {
+            throw new BadRequestException("No orders were provided for payment finalization.");
+        }
+
+        const confirmedOrders: any[] = [];
+        for (const orderId of orderIds) {
+            confirmedOrders.push(await this.confirmOrder(orderId, undefined, false));
+        }
+
+        if (params.cartId) {
+            await this.prismaService.cartItem.deleteMany({
+                where: {
+                    cartId: params.cartId,
+                    ...(params.cartItemIds?.length ? { id: { in: params.cartItemIds } } : {}),
+                },
+            });
+        }
+
+        if (params.couponId) {
+            await this.prismaService.coupon.update({
+                where: { id: params.couponId },
+                data: { used_count: { increment: 1 } },
+            });
+        }
+
+        for (const orderId of orderIds) {
+            await this.markProductsSoldForOrder(orderId);
+        }
+
+        return confirmedOrders;
+    }
+
+    async cancelPendingPaymentOrders(orderIds: number[], reason: string) {
+        const normalizedOrderIds = [...new Set(orderIds.filter((id) => Number.isInteger(id) && id > 0))];
+        if (!normalizedOrderIds.length) {
+            return { count: 0 };
+        }
+
+        return this.prismaService.order.updateMany({
+            where: {
+                id: { in: normalizedOrderIds },
+                status: OrderStatus.PENDING,
+            },
+            data: {
+                status: OrderStatus.CANCELLED,
+                cancelled_at: new Date(),
+                cancelled_by_actor: OrderCancellationActor.SYSTEM,
+                cancellation_reason: reason,
+            },
+        });
+    }
+
+    /**
+     * Atomically flips a single-unit product from ACTIVE to SOLD. The WHERE guard makes this
+     * safe under concurrency — if two buyers race to check out the same item, only the first
+     * `updateMany` inside this transaction affects a row; the loser sees count 0 and is rejected
+     * instead of both orders succeeding.
+     */
+    async markProductsSoldForOrder(orderId: number) {
+        const order = await this.prismaService.order.findUnique({
+            where: { id: orderId },
+            include: { items: true },
+        });
+
+        if (!order) {
+            throw new NotFoundException(`Order with ID ${orderId} not found`);
+        }
+
+        if (order.status === OrderStatus.CONFIRMED) {
+            const productIds = [...new Set(order.items.map((item) => item.productId))];
+            const alreadySold = await this.prismaService.product.findMany({
+                where: { id: { in: productIds }, status: ProductStatus.SOLD },
+                select: { id: true },
+            });
+
+            if (alreadySold.length === productIds.length) {
+                return;
+            }
+        }
+
+        const productIds = [...new Set(order.items.map((item) => item.productId))];
+        if (productIds.length === 0) {
+            return;
+        }
+
+        await this.prismaService.$transaction(async (tx) => {
+            for (const productId of productIds) {
+                const claimed = await tx.product.updateMany({
+                    where: {
+                        id: productId,
+                        status: ProductStatus.ACTIVE,
+                        authentication_status: AuthenticationStatus.VERIFIED,
+                    },
+                    data: { status: ProductStatus.SOLD, sold_at: new Date() },
+                });
+
+                if (claimed.count === 0) {
+                    const product = await tx.product.findUnique({ where: { id: productId }, select: { name: true, status: true } });
+                    if (product?.status === ProductStatus.SOLD) {
+                        return;
+                    }
+                    throw new ConflictException(`${product?.name ?? "Product"} was just sold and is no longer available.`);
+                }
+            }
+        });
+    }
+
+    /**
+     * Relists a single-unit product after its order is cancelled, so it can be purchased again.
+     * Only restores items that are still SOLD (i.e. haven't been relisted or resold already).
+     */
+    private async restoreProductsAfterCancellation(tx: Prisma.TransactionClient, productIds: number[]) {
+        if (productIds.length === 0) {
+            return;
+        }
+        await tx.product.updateMany({
+            where: { id: { in: productIds }, status: ProductStatus.SOLD },
+            data: { status: ProductStatus.ACTIVE, sold_at: null },
+        });
     }
 
     private getStatusesForBuyerTab(tab: BuyerOrderTab) {
@@ -670,7 +1680,6 @@ export class OrderService {
                             total_reviews: true,
                         },
                     },
-                    variant: true,
                     returnRequests: { orderBy: { createdAt: "desc" as const }, take: 1 },
                     review: {
                         include: {
@@ -687,7 +1696,7 @@ export class OrderService {
         };
     }
 
-    private formatOrderCard(order: any) {
+    private async formatOrderCard(order: any, currency: CurrencyPreference) {
         return {
             id: order.id,
             display_id: this.getDisplayOrderId(order.id),
@@ -695,17 +1704,19 @@ export class OrderService {
             status_label: this.getStatusLabel(order.status),
             status_tone: this.getStatusTone(order.status),
             createdAt: order.createdAt,
-            total: order.total,
-            item_count: order.items.reduce((sum: number, item: any) => sum + item.quantity, 0),
+            total: await this.convertUsdAmount(order.total, currency),
+            currency,
+            item_count: order.items.length,
             seller: order.seller,
-            preview_items: order.items.slice(0, 2).map((item: any) => ({
-                id: item.id,
-                productId: item.productId,
-                name: item.product?.name,
-                image_url: item.product?.image_urls?.[0] ?? null,
-                quantity: item.quantity,
-                price: item.price,
-            })),
+            preview_items: await Promise.all(
+                order.items.slice(0, 2).map(async (item: any) => ({
+                    id: item.id,
+                    productId: item.productId,
+                    name: item.product?.name,
+                    image_url: item.product?.image_urls?.[0] ?? null,
+                    price: await this.convertUsdAmount(item.price, currency),
+                })),
+            ),
             actions: {
                 can_view_details: true,
                 can_cancel: this.canCancelOrder(order.status),
@@ -713,7 +1724,7 @@ export class OrderService {
         };
     }
 
-    private formatSellerOrderCard(order: any) {
+    private async formatSellerOrderCard(order: any, currency: CurrencyPreference) {
         return {
             id: order.id,
             display_id: this.getDisplayOrderId(order.id),
@@ -721,18 +1732,19 @@ export class OrderService {
             status_label: this.getStatusLabel(order.status),
             status_tone: this.getStatusTone(order.status),
             createdAt: order.createdAt,
-            total: order.total,
-            item_count: order.items.reduce((sum: number, item: any) => sum + item.quantity, 0),
+            total: await this.convertUsdAmount(order.total, currency),
+            currency,
+            item_count: order.items.length,
             buyer: order.user,
-            preview_items: order.items.slice(0, 2).map((item: any) => ({
-                id: item.id,
-                productId: item.productId,
-                name: item.product?.name,
-                image_url: item.product?.image_urls?.[0] ?? null,
-                variant: item.variant,
-                quantity: item.quantity,
-                price: item.price,
-            })),
+            preview_items: await Promise.all(
+                order.items.slice(0, 2).map(async (item: any) => ({
+                    id: item.id,
+                    productId: item.productId,
+                    name: item.product?.name,
+                    image_url: item.product?.image_urls?.[0] ?? null,
+                    price: await this.convertUsdAmount(item.price, currency),
+                })),
+            ),
             cancellation: this.getCancellationSummary(order),
             timeline: this.getTimelineSummary(order),
             actions: {
@@ -742,7 +1754,26 @@ export class OrderService {
         };
     }
 
-    private formatOrderDetail(order: any) {
+    private async formatSellerOrderCardForProduct(order: any, productId: number, currency: CurrencyPreference) {
+        const matchedItems = order.items.filter((item: any) => item.productId === productId);
+
+        return {
+            ...(await this.formatSellerOrderCard(order, currency)),
+            matched_product_items: await Promise.all(
+                matchedItems.map(async (item: any) => ({
+                    id: item.id,
+                    productId: item.productId,
+                    name: item.product?.name,
+                    image_url: item.product?.image_urls?.[0] ?? null,
+                    price: await this.convertUsdAmount(item.price, currency),
+                    line_total: await this.convertUsdAmount(item.price, currency),
+                })),
+            ),
+            matched_item_count: matchedItems.length,
+        };
+    }
+
+    private async formatOrderDetail(order: any, currency: CurrencyPreference) {
         return {
             id: order.id,
             display_id: this.getDisplayOrderId(order.id),
@@ -751,10 +1782,11 @@ export class OrderService {
             status_tone: this.getStatusTone(order.status),
             createdAt: order.createdAt,
             updatedAt: order.updatedAt,
-            total: order.total,
+            total: await this.convertUsdAmount(order.total, currency),
+            currency,
             delivery: {
                 partner: order.delivery_partner,
-                cost: order.delivery_cost,
+                cost: await this.convertUsdAmount(order.delivery_cost ?? 0, currency),
                 days_min: order.delivery_days_min,
                 days_max: order.delivery_days_max,
             },
@@ -771,14 +1803,14 @@ export class OrderService {
             actions: {
                 can_cancel: this.canCancelOrder(order.status),
             },
-            items: order.items.map((item: any) => this.formatOrderItem(item, order.status)),
+            items: await Promise.all(order.items.map((item: any) => this.formatOrderItem(item, order.status, currency))),
         };
     }
 
-    private async formatSellerOrderDetail(order: any) {
+    private async formatSellerOrderDetail(order: any, currency: CurrencyPreference) {
         const chatRoomId = await this.getExistingChatRoomId(order.userId, order.sellerId);
         return {
-            ...this.formatOrderDetail(order),
+            ...(await this.formatOrderDetail(order, currency)),
             chat_room_id: chatRoomId,
             ordered_by: order.user,
             actions: {
@@ -795,15 +1827,14 @@ export class OrderService {
         };
     }
 
-    private formatOrderItem(item: any, orderStatus: OrderStatus) {
+    private async formatOrderItem(item: any, orderStatus: OrderStatus, currency: CurrencyPreference) {
         const latestReturn = item.returnRequests?.[0] ?? null;
+        const price = await this.convertUsdAmount(item.price, currency);
         return {
             id: item.id,
             productId: item.productId,
-            variantId: item.variantId,
-            quantity: item.quantity,
-            price: item.price,
-            line_total: item.price * item.quantity,
+            price,
+            line_total: price,
             product: item.product
                 ? {
                       id: item.product.id,
@@ -813,9 +1844,6 @@ export class OrderService {
                       average_rating: item.product.average_rating,
                       total_reviews: item.product.total_reviews,
                   }
-                : null,
-            variant: item.variant
-                ? { id: item.variant.id, variantName: item.variant.variantName, price: item.variant.price }
                 : null,
             review: item.review ?? null,
             return_request: latestReturn,
