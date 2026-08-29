@@ -135,23 +135,21 @@ pipeline {
 
             $releaseId = "$env:BUILD_NUMBER-$env:GIT_COMMIT"
             $remoteTarball = "/tmp/bestkid-$releaseId.tar.gz"
+            $remoteDeployScript = "/tmp/bestkid-deploy-$releaseId.sh"
             $remoteTarget = "$($env:EC2_USER)@$($env:EC2_HOST):$remoteTarball"
+            $remoteScriptTarget = "$($env:EC2_USER)@$($env:EC2_HOST):$remoteDeployScript"
             $safeBuildTag = $env:BUILD_TAG -replace '[^A-Za-z0-9_.-]', '-'
             $deployKey = Join-Path ([System.IO.Path]::GetTempPath()) "jenkins-deploy-key-$safeBuildTag"
 
             try {
-            Copy-Item -LiteralPath "$env:SSH_KEY" -Destination "$deployKey" -Force
-            $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-            icacls.exe "$deployKey" /inheritance:r | Out-Null
-            icacls.exe "$deployKey" /grant:r "*${currentSid}:R" | Out-Null
+              Copy-Item -LiteralPath "$env:SSH_KEY" -Destination "$deployKey" -Force
+              $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+              icacls.exe "$deployKey" /inheritance:r | Out-Null
+              icacls.exe "$deployKey" /grant:r "*${currentSid}:R" | Out-Null
 
-            scp -i "$deployKey" -P "$env:EC2_PORT" -o StrictHostKeyChecking=accept-new release.tar.gz "$remoteTarget"
-            if ($LASTEXITCODE -ne 0) {
-              throw "scp upload failed with exit code $LASTEXITCODE."
-            }
-
-            $remoteScript = @'
+              $remoteScript = @'
 set -Eeuo pipefail
+trap 'rm -f -- "$0"' EXIT
 
 if [ -s "$HOME/.nvm/nvm.sh" ]; then
   . "$HOME/.nvm/nvm.sh"
@@ -259,17 +257,35 @@ rm -f "$RELEASE_TARBALL"
 exit "$HEALTH_STATUS"
 '@
 
-            Set-Content -LiteralPath 'remote-deploy.sh' -Value $remoteScript -NoNewline -Encoding UTF8
+              # Windows PowerShell 5 writes a BOM with -Encoding UTF8. Bash then
+              # reads the BOM and CRLF characters as part of its commands, so
+              # write an explicitly BOM-less, LF-only deployment script.
+              $remoteScript = $remoteScript -replace "`r`n", "`n"
+              $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
+              $localScriptPath = Join-Path $PWD 'remote-deploy.sh'
+              [System.IO.File]::WriteAllText($localScriptPath, $remoteScript, $utf8WithoutBom)
 
-            $remoteCommand = "DEPLOY_PATH='$($env:DEPLOY_PATH)' RELEASE_ID='$releaseId' PM2_APP_NAME='$($env:PM2_APP_NAME)' RUN_MIGRATIONS='$($env:RUN_MIGRATIONS)' HEALTHCHECK_URL='$($env:HEALTHCHECK_URL)' bash -s"
+              scp -i "$deployKey" -P "$env:EC2_PORT" -o StrictHostKeyChecking=accept-new release.tar.gz "$remoteTarget"
+              if ($LASTEXITCODE -ne 0) {
+                throw "Release upload failed with exit code $LASTEXITCODE."
+              }
 
-            Get-Content -LiteralPath 'remote-deploy.sh' |
+              scp -i "$deployKey" -P "$env:EC2_PORT" -o StrictHostKeyChecking=accept-new remote-deploy.sh "$remoteScriptTarget"
+              if ($LASTEXITCODE -ne 0) {
+                throw "Deployment script upload failed with exit code $LASTEXITCODE."
+              }
+
+              $remoteCommand = "DEPLOY_PATH='$($env:DEPLOY_PATH)' RELEASE_ID='$releaseId' PM2_APP_NAME='$($env:PM2_APP_NAME)' RUN_MIGRATIONS='$($env:RUN_MIGRATIONS)' HEALTHCHECK_URL='$($env:HEALTHCHECK_URL)' bash '$remoteDeployScript'"
+
               ssh -i "$deployKey" -p "$env:EC2_PORT" -o StrictHostKeyChecking=accept-new "$($env:EC2_USER)@$($env:EC2_HOST)" "$remoteCommand"
-            if ($LASTEXITCODE -ne 0) {
-              throw "ssh deploy failed with exit code $LASTEXITCODE."
-            }
+              if ($LASTEXITCODE -ne 0) {
+                throw "ssh deploy failed with exit code $LASTEXITCODE."
+              }
             } finally {
               if (Test-Path -LiteralPath "$deployKey") {
+                if ($currentSid) {
+                  icacls.exe "$deployKey" /grant:r "*${currentSid}:F" | Out-Null
+                }
                 Remove-Item -LiteralPath "$deployKey" -Force
               }
 
