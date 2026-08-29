@@ -934,6 +934,14 @@ const legalDocumentExample = {
   updatedAt: '2026-07-09T08:00:00.000Z',
 };
 
+const aboutUsExample = {
+  id: 1,
+  content:
+    "BestKid is a trusted marketplace for families to buy and sell children's products with confidence.",
+  createdAt: '2026-07-09T08:00:00.000Z',
+  updatedAt: '2026-07-09T08:00:00.000Z',
+};
+
 const companyInfoExample = {
   id: 1,
   about:
@@ -2291,6 +2299,18 @@ function getRouteSuccessExample(method: string, path: string) {
       statusCode: 200,
       message: 'Request successful',
       data: companyInfoExample,
+    },
+    'GET /content/about-us': {
+      success: true,
+      statusCode: 200,
+      message: 'Request successful',
+      data: aboutUsExample,
+    },
+    'POST /content/about-us': {
+      success: true,
+      statusCode: 200,
+      message: 'Request successful',
+      data: aboutUsExample,
     },
     'POST /content/contact': {
       success: true,

@@ -34,7 +34,7 @@ export class AuthController {
     @Post("login")
     @Public()
     @HttpCode(HttpStatus.OK)
-    @ApiOperation({ summary: "Login — returns JWT or { email_unverified: true } or { user_is_blocked: true }" })
+    @ApiOperation({ summary: "Login — returns JWT or { email_unverified: true, email_verification_id } or { user_is_blocked: true }" })
     @ApiBody({ type: SigninDto })
     async login(@Body() signinDto: SigninDto) {
         return this.authService.login(signinDto)

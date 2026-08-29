@@ -121,4 +121,19 @@ describe('AuthService.verifyOtp', () => {
     expect(userService.updateFcmToken).toHaveBeenCalledWith(42, 'new-fcm-token');
     expect(result).toBe('jwt-token');
   });
+
+  it('sends a new email verification OTP when an unverified user logs in', async () => {
+    authProvider.authenticate.mockResolvedValueOnce({ email_unverified: true });
+
+    const result = await service.login({ email: 'user@example.com', password: 'password123' } as any);
+
+    expect(userService.getUserByEmail).toHaveBeenCalledWith('user@example.com');
+    expect(otpService.create).toHaveBeenCalledWith(42, OtpPurpose.EMAIL_VERIFICATION, expect.any(Date));
+    expect(smtpProvider.sendMail).toHaveBeenCalled();
+    expect(userService.updateFcmToken).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      email_unverified: true,
+      email_verification_id: 'req-reset',
+    });
+  });
 });
