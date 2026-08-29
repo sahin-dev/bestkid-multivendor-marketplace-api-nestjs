@@ -46,6 +46,8 @@ export class HomeController {
     return this.homeService.getNewArrivalProducts(user?.id, query);
   }
 
+
+  
   @Get('recently-viewed')
   @ApiBearerAuth('access-token')
   @ApiOperation({ summary: 'Get recently viewed products for logged-in user' })
