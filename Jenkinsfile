@@ -1,11 +1,21 @@
 pipeline {
   agent any
 
-  parameters {
-    booleanParam(name: 'DEPLOY_TO_EC2', defaultValue: false, description: 'Deploy to EC2 after build?')
+  tools {
+    nodejs 'node-24'
   }
 
   stages {
+    stage('Verify Tools') {
+      steps {
+        powershell '''
+          node -v
+          npm -v
+          pnpm -v
+        '''
+      }
+    }
+
     stage('Install') {
       steps {
         powershell 'pnpm install --frozen-lockfile'
