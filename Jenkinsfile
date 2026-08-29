@@ -12,7 +12,7 @@ pipeline {
 
   parameters {
     booleanParam(name: 'DEPLOY_TO_EC2', defaultValue: false, description: 'Deploy to EC2 after build?')
-    string(name: 'EC2_HOST', defaultValue: '', description: 'EC2 public IP or domain. Required only when DEPLOY_TO_EC2=true.')
+    string(name: 'EC2_HOST', defaultValue: '52.2.132.76', description: 'EC2 public IP or domain. Required only when DEPLOY_TO_EC2=true.')
     string(name: 'EC2_PORT', defaultValue: '22', description: 'SSH port for EC2.')
     string(name: 'DEPLOY_PATH', defaultValue: '/var/www/bestkid', description: 'Must match GitHub Actions DEPLOY_PATH.')
     string(name: 'PM2_APP_NAME', defaultValue: 'bestkid-api', description: 'Must match GitHub Actions PM2_APP_NAME.')
