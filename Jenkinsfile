@@ -136,8 +136,18 @@ pipeline {
             $releaseId = "$env:BUILD_NUMBER-$env:GIT_COMMIT"
             $remoteTarball = "/tmp/bestkid-$releaseId.tar.gz"
             $remoteTarget = "$($env:EC2_USER)@$($env:EC2_HOST):$remoteTarball"
+            $deployKey = Join-Path $env:WORKSPACE '.jenkins-deploy-key'
 
-            scp -i "$env:SSH_KEY" -P "$env:EC2_PORT" -o StrictHostKeyChecking=accept-new release.tar.gz "$remoteTarget"
+            try {
+            Copy-Item -LiteralPath "$env:SSH_KEY" -Destination "$deployKey" -Force
+            $keyUser = "$($env:USERDOMAIN)\$($env:USERNAME)"
+            icacls.exe "$deployKey" /inheritance:r | Out-Null
+            icacls.exe "$deployKey" /grant:r "${keyUser}:R" | Out-Null
+
+            scp -i "$deployKey" -P "$env:EC2_PORT" -o StrictHostKeyChecking=accept-new release.tar.gz "$remoteTarget"
+            if ($LASTEXITCODE -ne 0) {
+              throw "scp upload failed with exit code $LASTEXITCODE."
+            }
 
             $remoteScript = @'
 set -Eeuo pipefail
@@ -253,7 +263,19 @@ exit "$HEALTH_STATUS"
             $remoteCommand = "DEPLOY_PATH='$($env:DEPLOY_PATH)' RELEASE_ID='$releaseId' PM2_APP_NAME='$($env:PM2_APP_NAME)' RUN_MIGRATIONS='$($env:RUN_MIGRATIONS)' HEALTHCHECK_URL='$($env:HEALTHCHECK_URL)' bash -s"
 
             Get-Content -LiteralPath 'remote-deploy.sh' |
-              ssh -i "$env:SSH_KEY" -p "$env:EC2_PORT" -o StrictHostKeyChecking=accept-new "$($env:EC2_USER)@$($env:EC2_HOST)" "$remoteCommand"
+              ssh -i "$deployKey" -p "$env:EC2_PORT" -o StrictHostKeyChecking=accept-new "$($env:EC2_USER)@$($env:EC2_HOST)" "$remoteCommand"
+            if ($LASTEXITCODE -ne 0) {
+              throw "ssh deploy failed with exit code $LASTEXITCODE."
+            }
+            } finally {
+              if (Test-Path -LiteralPath "$deployKey") {
+                Remove-Item -LiteralPath "$deployKey" -Force
+              }
+
+              if (Test-Path -LiteralPath 'remote-deploy.sh') {
+                Remove-Item -LiteralPath 'remote-deploy.sh' -Force
+              }
+            }
           '''
         }
       }
