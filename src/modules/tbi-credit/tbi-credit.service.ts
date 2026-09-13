@@ -56,8 +56,10 @@ export class TbiCreditService {
 
     async createCheckoutSession(userId: number, dto: CreateTbiCheckoutSessionDto) {
         this.assertAcceptedTerms(dto.acceptedTerms);
-        const selectedSellerIds = this.normalizePositiveIntegerIds(dto.sellerIds);
         const selectedCartItemIds = this.normalizePositiveIntegerIds(dto.cartItemIds);
+        const selectedSellerIds = selectedCartItemIds.length
+            ? []
+            : this.normalizePositiveIntegerIds(dto.sellerIds);
 
         if (dto.productId !== undefined) {
             if (selectedSellerIds.length || selectedCartItemIds.length) {

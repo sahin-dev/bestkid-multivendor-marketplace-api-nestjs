@@ -71,18 +71,27 @@ export class TbiCreditClient {
     private encrypt(plainText: string) {
         const algorithm = this.config.encryption_algorithm;
         const cipher = createCipheriv(algorithm, this.deriveKey(), this.deriveIv());
-        return Buffer.concat([cipher.update(plainText, "utf8"), cipher.final()]).toString("base64");
+        const encrypted = Buffer.concat([cipher.update(plainText, "utf8"), cipher.final()]).toString("base64");
+
+        return this.config.encryption_output_encoding === "base64"
+            ? encrypted
+            : Buffer.from(encrypted).toString("base64");
     }
 
     private deriveKey() {
         const key = this.config.encryption_key ?? "";
+        const mode = this.config.encryption_key_mode;
         if (this.config.encryption_key_mode === "raw_hex" && /^[a-f0-9]+$/i.test(key) && key.length >= 64) {
             return Buffer.from(key, "hex").subarray(0, 32);
         }
-        if (this.config.encryption_key_mode === "raw_utf8") {
+        if (mode === "raw_utf8") {
             return Buffer.from(key.padEnd(32, "0")).subarray(0, 32);
         }
-        return createHash("sha256").update(key).digest();
+        if (mode === "sha256_binary") {
+            return createHash("sha256").update(key).digest();
+        }
+
+        return Buffer.from(createHash("sha256").update(key).digest("hex")).subarray(0, 32);
     }
 
     private deriveIv() {
@@ -93,7 +102,20 @@ export class TbiCreditClient {
             }
             return Buffer.from(configuredIv.padEnd(16, "0")).subarray(0, 16);
         }
-        return createHash("sha256").update(this.config.encryption_key ?? "").digest().subarray(0, 16);
+
+        const key = this.config.encryption_key ?? "";
+        const mode = this.config.encryption_key_mode;
+        if (mode === "raw_hex" && /^[a-f0-9]+$/i.test(key) && key.length >= 32) {
+            return Buffer.from(key, "hex").subarray(0, 16);
+        }
+        if (mode === "raw_utf8") {
+            return Buffer.from(key.padEnd(16, "0")).subarray(0, 16);
+        }
+        if (mode === "sha256_binary") {
+            return createHash("sha256").update(key).digest().subarray(0, 16);
+        }
+
+        return Buffer.from(createHash("sha256").update(key).digest("hex").slice(0, 16));
     }
 
     private async postJson(path: string, body: TbiRequestBody) {
