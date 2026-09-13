@@ -56,9 +56,11 @@ export class TbiCreditService {
 
     async createCheckoutSession(userId: number, dto: CreateTbiCheckoutSessionDto) {
         this.assertAcceptedTerms(dto.acceptedTerms);
+        const selectedSellerIds = this.normalizePositiveIntegerIds(dto.sellerIds);
+        const selectedCartItemIds = this.normalizePositiveIntegerIds(dto.cartItemIds);
 
         if (dto.productId !== undefined) {
-            if (dto.sellerIds?.length || dto.cartItemIds?.length) {
+            if (selectedSellerIds.length || selectedCartItemIds.length) {
                 throw new BadRequestException(
                     "Use either productId for Buy Now or sellerIds/cartItemIds for cart checkout, not both.",
                 );
@@ -82,8 +84,8 @@ export class TbiCreditService {
 
         const user = await this.getBuyer(userId);
         const checkoutSummaryUsd = await this.orderService.getCheckoutSummaryForPayment(userId, {
-            sellerIds: dto.sellerIds,
-            cartItemIds: dto.cartItemIds,
+            sellerIds: selectedSellerIds,
+            cartItemIds: selectedCartItemIds,
             addressId: dto.addressId,
             country: dto.country,
             couponCode: dto.couponCode,
@@ -97,8 +99,8 @@ export class TbiCreditService {
         );
 
         const orderResult = await this.orderService.createPendingCartOrders(userId, {
-            sellerIds: dto.sellerIds,
-            cartItemIds: dto.cartItemIds,
+            sellerIds: selectedSellerIds,
+            cartItemIds: selectedCartItemIds,
             addressId: dto.addressId,
             shippingAddress: dto.shippingAddress,
             city: dto.city,
@@ -171,8 +173,8 @@ export class TbiCreditService {
                 amount_total_usd: checkoutSummaryUsd.price_details.total,
                 pending_orders: orderResult.orders,
                 checkout_summary: await this.orderService.getCheckoutSummary(userId, {
-                    sellerIds: dto.sellerIds,
-                    cartItemIds: dto.cartItemIds,
+                    sellerIds: selectedSellerIds,
+                    cartItemIds: selectedCartItemIds,
                     addressId: dto.addressId,
                     country: dto.country,
                     couponCode: dto.couponCode,
@@ -186,7 +188,7 @@ export class TbiCreditService {
 
     async createBuyNowSession(userId: number, dto: CreateTbiBuyNowSessionDto) {
         this.assertAcceptedTerms(dto.acceptedTerms);
-        if (dto.sellerIds?.length || dto.cartItemIds?.length) {
+        if (this.normalizePositiveIntegerIds(dto.sellerIds).length || this.normalizePositiveIntegerIds(dto.cartItemIds).length) {
             throw new BadRequestException("Use productId for TBI Buy Now, not sellerIds or cartItemIds.");
         }
 
@@ -882,6 +884,10 @@ export class TbiCreditService {
         }
         const numberValue = Number(value);
         return Number.isInteger(numberValue) && numberValue > 0 ? numberValue : undefined;
+    }
+
+    private normalizePositiveIntegerIds(ids?: number[]) {
+        return [...new Set((ids ?? []).map(Number).filter((id) => Number.isInteger(id) && id > 0))];
     }
 
     private numberArrayFromMetadata(value: unknown) {
