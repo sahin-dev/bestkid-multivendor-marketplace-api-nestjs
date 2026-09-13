@@ -115,7 +115,7 @@ export class TbiCreditClient {
                 body: JSON.stringify(body),
             });
             const text = await response.text();
-            const data = text ? JSON.parse(text) : undefined;
+            const data = this.parseJsonResponse(text);
 
             if (!response.ok || this.isTbiError(data)) {
                 throw this.toHttpException(response, data);
@@ -132,6 +132,21 @@ export class TbiCreditClient {
             throw new BadGatewayException(`TBI Credit request failed: ${(error as Error).message}`);
         } finally {
             clearTimeout(timeout);
+        }
+    }
+
+    private parseJsonResponse(text: string) {
+        if (!text) {
+            return undefined;
+        }
+
+        try {
+            return JSON.parse(text);
+        } catch {
+            throw new BadGatewayException({
+                message: "TBI Credit returned an invalid JSON response.",
+                details: text.slice(0, 500),
+            });
         }
     }
 

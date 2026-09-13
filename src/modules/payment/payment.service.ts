@@ -39,8 +39,8 @@ export class PaymentService {
         provider_application_id: params.providerApplicationId,
         provider_redirect_url: params.providerRedirectUrl,
         provider_status: params.providerStatus,
-        provider_payload: params.providerPayload ?? undefined,
-        metadata: params.metadata ?? undefined,
+        provider_payload: this.toInputJson(params.providerPayload),
+        metadata: this.toInputJson(params.metadata),
       },
     });
   }
@@ -121,18 +121,26 @@ export class PaymentService {
       data.provider_application_id = params.providerApplicationId;
     }
     if (params.providerPayload !== undefined) {
-      data.provider_payload = params.providerPayload as Prisma.InputJsonValue;
+      data.provider_payload = this.toInputJson(params.providerPayload);
     }
     if (params.paymentStatus !== undefined) {
       data.payment_status = params.paymentStatus;
     }
     if (params.metadata !== undefined) {
-      data.metadata = params.metadata as Prisma.InputJsonValue;
+      data.metadata = this.toInputJson(params.metadata);
     }
 
     return this.prismaService.paymentTransaction.update({
       where: { id: transactionId },
       data,
     });
+  }
+
+  private toInputJson(value?: Prisma.JsonValue) {
+    if (value === undefined) {
+      return undefined;
+    }
+
+    return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
   }
 }
