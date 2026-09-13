@@ -95,6 +95,12 @@ export class CreateTbiCheckoutSessionDto {
     @Type(() => Number)
     @IsInt()
     @IsOptional()
+    @ApiPropertyOptional({ description: "Product ID for direct Buy Now checkout. Do not combine with sellerIds or cartItemIds." })
+    productId?: number;
+
+    @Type(() => Number)
+    @IsInt()
+    @IsOptional()
     @ApiPropertyOptional({ description: "Saved address ID selected on checkout page." })
     addressId?: number;
 
@@ -143,5 +149,5 @@ export class CreateTbiBuyNowSessionDto extends CreateTbiCheckoutSessionDto {
     @Type(() => Number)
     @IsInt()
     @ApiProperty({ description: "Product ID selected from the product details page." })
-    productId: number;
+    declare productId: number;
 }

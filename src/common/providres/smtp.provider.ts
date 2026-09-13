@@ -6,7 +6,6 @@ import mailerConfig, { MailerConfig } from "src/config/mailer.config";
 @Injectable()
 export class SMTPProvider {
 
-
     private transporter:Transporter
     constructor(@Inject(mailerConfig.KEY)private readonly mailerConfiguration:ConfigType<typeof MailerConfig>){
         console.log(mailerConfiguration)

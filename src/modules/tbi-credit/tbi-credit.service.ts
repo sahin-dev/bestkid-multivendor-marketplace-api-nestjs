@@ -56,6 +56,30 @@ export class TbiCreditService {
 
     async createCheckoutSession(userId: number, dto: CreateTbiCheckoutSessionDto) {
         this.assertAcceptedTerms(dto.acceptedTerms);
+
+        if (dto.productId !== undefined) {
+            if (dto.sellerIds?.length || dto.cartItemIds?.length) {
+                throw new BadRequestException(
+                    "Use either productId for Buy Now or sellerIds/cartItemIds for cart checkout, not both.",
+                );
+            }
+
+            return this.createBuyNowSession(userId, {
+                productId: dto.productId,
+                addressId: dto.addressId,
+                shippingAddress: dto.shippingAddress,
+                city: dto.city,
+                postalCode: dto.postalCode,
+                country: dto.country,
+                couponCode: dto.couponCode,
+                successUrl: dto.successUrl,
+                failUrl: dto.failUrl,
+                period: dto.period,
+                bnpl: dto.bnpl,
+                acceptedTerms: true,
+            });
+        }
+
         const user = await this.getBuyer(userId);
         const checkoutSummaryUsd = await this.orderService.getCheckoutSummaryForPayment(userId, {
             sellerIds: dto.sellerIds,
