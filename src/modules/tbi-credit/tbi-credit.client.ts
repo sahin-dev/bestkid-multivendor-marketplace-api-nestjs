@@ -7,7 +7,7 @@ import {
     UnauthorizedException,
 } from "@nestjs/common";
 import type { ConfigType } from "@nestjs/config";
-import { createCipheriv, createHash } from "crypto";
+import { createCipheriv, createHash, randomBytes } from "crypto";
 import tbiCreditConfig, { TbiCreditConfig } from "src/config/tbi-credit.config";
 
 type TbiRequestBody = Record<string, unknown>;
@@ -69,53 +69,14 @@ export class TbiCreditClient {
     }
 
     private encrypt(plainText: string) {
-        const algorithm = this.config.encryption_algorithm;
-        const cipher = createCipheriv(algorithm, this.deriveKey(), this.deriveIv());
-        const encrypted = Buffer.concat([cipher.update(plainText, "utf8"), cipher.final()]).toString("base64");
+        const key = createHash("sha256")
+            .update(this.config.encryption_key ?? "")
+            .digest();
+        const iv = randomBytes(16);
+        const cipher = createCipheriv("aes-256-ctr", key, iv);
+        const encrypted = Buffer.concat([cipher.update(plainText, "utf8"), cipher.final()]);
 
-        return this.config.encryption_output_encoding === "base64"
-            ? encrypted
-            : Buffer.from(encrypted).toString("base64");
-    }
-
-    private deriveKey() {
-        const key = this.config.encryption_key ?? "";
-        const mode = this.config.encryption_key_mode;
-        if (this.config.encryption_key_mode === "raw_hex" && /^[a-f0-9]+$/i.test(key) && key.length >= 64) {
-            return Buffer.from(key, "hex").subarray(0, 32);
-        }
-        if (mode === "raw_utf8") {
-            return Buffer.from(key.padEnd(32, "0")).subarray(0, 32);
-        }
-        if (mode === "sha256_binary") {
-            return createHash("sha256").update(key).digest();
-        }
-
-        return Buffer.from(createHash("sha256").update(key).digest("hex")).subarray(0, 32);
-    }
-
-    private deriveIv() {
-        const configuredIv = this.config.encryption_iv?.trim();
-        if (configuredIv) {
-            if (/^[a-f0-9]+$/i.test(configuredIv) && configuredIv.length >= 32) {
-                return Buffer.from(configuredIv, "hex").subarray(0, 16);
-            }
-            return Buffer.from(configuredIv.padEnd(16, "0")).subarray(0, 16);
-        }
-
-        const key = this.config.encryption_key ?? "";
-        const mode = this.config.encryption_key_mode;
-        if (mode === "raw_hex" && /^[a-f0-9]+$/i.test(key) && key.length >= 32) {
-            return Buffer.from(key, "hex").subarray(0, 16);
-        }
-        if (mode === "raw_utf8") {
-            return Buffer.from(key.padEnd(16, "0")).subarray(0, 16);
-        }
-        if (mode === "sha256_binary") {
-            return createHash("sha256").update(key).digest().subarray(0, 16);
-        }
-
-        return Buffer.from(createHash("sha256").update(key).digest("hex").slice(0, 16));
+        return Buffer.concat([iv, encrypted]).toString("base64");
     }
 
     private async postJson(path: string, body: TbiRequestBody) {
