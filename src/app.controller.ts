@@ -1,6 +1,7 @@
 import { Controller, Get, HttpStatus, Render, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { SkipThrottle } from '@nestjs/throttler';
 import { AppService } from './app.service';
 import { Public } from './common/decorators';
 
@@ -19,6 +20,7 @@ export class AppController {
 
   @Get('/health')
   @Public()
+  @SkipThrottle()
   @ApiOperation({
     summary: 'Health check for uptime monitors and deployment verification',
   })
@@ -39,11 +41,5 @@ export class AppController {
     }
 
     return health;
-  }
-
-  @Get('/debug-sentry')
-  @Public()
-  getError() {
-    throw new Error('My first Sentry error!');
   }
 }

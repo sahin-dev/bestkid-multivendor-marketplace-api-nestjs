@@ -1,30 +1,34 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
-import { CurrencyPreference, OrderStatus } from "generated/prisma/client";
+import { CurrencyPreference, OrderStatus, SellerTier } from "generated/prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { SellerEarningsPeriod, SellerEarningsQueryDto } from "./dtos/seller-earnings-query.dto";
 import { CurrencyConversionService } from "../currency/currency.service";
+import { PaymentService } from "../payment/payment.service";
+import { getSellerFeePercent } from "src/config/seller-fee";
+
+// PENDING orders are unpaid checkouts
+const UNEARNED_ORDER_STATUSES = [OrderStatus.PENDING, OrderStatus.CANCELLED, OrderStatus.REFUNDED];
 
 @Injectable()
 export class SellerService {
     constructor(
         private readonly prismaService: PrismaService,
         private readonly currencyService: CurrencyConversionService,
+        private readonly paymentService: PaymentService,
     ) {}
 
     async getOptions(sellerId: number) {
-        const [customerOrders, returnOrders, deliveryOptions, earningsAggregate, userCurrency] = await Promise.all([
-            this.prismaService.order.count({ where: { sellerId } }),
+        const sellerTier = await this.getSellerTier(sellerId);
+        const [customerOrders, returnOrders, deliveryOptions, earnings, userCurrency] = await Promise.all([
+            this.prismaService.order.count({ where: { sellerId, status: { not: OrderStatus.PENDING } } }),
             this.prismaService.returnRequest.count({
                 where: { orderItem: { order: { sellerId } } },
             }),
             this.prismaService.sellerDeliveryOption.findUnique({ where: { sellerId } }),
-            this.prismaService.order.aggregate({
-                where: {
-                    sellerId,
-                    status: { notIn: [OrderStatus.CANCELLED, OrderStatus.REFUNDED] },
-                },
-                _sum: { total: true },
-            }),
+            this.paymentService.getSellerEarnings(
+                { sellerId, status: { notIn: UNEARNED_ORDER_STATUSES } },
+                sellerTier,
+            ),
             this.getUserCurrency(sellerId),
         ]);
 
@@ -35,7 +39,7 @@ export class SellerService {
                 {
                     key: "earnings",
                     label: "Earnings",
-                    amount: await this.convertUsdAmount(earningsAggregate._sum.total ?? 0, userCurrency),
+                    amount: await this.convertUsdAmount(earnings.net, userCurrency),
                     currency: userCurrency,
                 },
                 {
@@ -87,15 +91,13 @@ export class SellerService {
 
         const where = {
             sellerId,
-            status: { notIn: [OrderStatus.CANCELLED, OrderStatus.REFUNDED] },
+            status: { notIn: UNEARNED_ORDER_STATUSES },
             ...(dateFilter ? { createdAt: dateFilter } : {}),
         };
 
-        const [aggregate, orders, total, userCurrency] = await Promise.all([
-            this.prismaService.order.aggregate({
-                where,
-                _sum: { total: true },
-            }),
+        const sellerTier = await this.getSellerTier(sellerId);
+        const [totals, orders, total, userCurrency] = await Promise.all([
+            this.paymentService.getSellerEarnings(where, sellerTier),
             this.prismaService.order.findMany({
                 where,
                 skip,
@@ -118,7 +120,9 @@ export class SellerService {
 
         return {
             period,
-            earnings: await this.convertUsdAmount(aggregate._sum.total ?? 0, userCurrency),
+            earnings: await this.convertUsdAmount(totals.net, userCurrency),
+            gross_sales: await this.convertUsdAmount(totals.gross, userCurrency),
+            platform_fees: await this.convertUsdAmount(Math.max(0, totals.gross - totals.net), userCurrency),
             currency: userCurrency,
             payment_history: await Promise.all(
                 orders.map(async (order) => ({
@@ -130,7 +134,8 @@ export class SellerService {
                     },
                     paid_at: order.createdAt,
                     status: order.status,
-                    amount: await this.convertUsdAmount(order.total, userCurrency),
+                    amount: await this.convertUsdAmount(this.getOrderNet(order, sellerTier), userCurrency),
+                    gross_amount: await this.convertUsdAmount(order.total, userCurrency),
                     item_count: order.items.length,
                 })),
             ),
@@ -141,6 +146,19 @@ export class SellerService {
                 pages: Math.ceil(total / limit),
             },
         };
+    }
+
+    private getOrderNet(order: { total: number; seller_net_amount: number | null }, sellerTier: SellerTier) {
+        return order.seller_net_amount ?? order.total * (1 - getSellerFeePercent(sellerTier) / 100);
+    }
+
+    private async getSellerTier(sellerId: number) {
+        const seller = await this.prismaService.baseUser.findUnique({
+            where: { id: sellerId },
+            select: { seller_tier: true },
+        });
+
+        return seller?.seller_tier ?? SellerTier.BASIC_SELLER;
     }
 
     private async getUserCurrency(userId: number): Promise<CurrencyPreference> {

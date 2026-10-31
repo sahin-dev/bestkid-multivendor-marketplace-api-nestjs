@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import type{ ConfigType } from "@nestjs/config";
 import nodemailer, { Transporter } from 'nodemailer'
 import mailerConfig, { MailerConfig } from "src/config/mailer.config";
@@ -6,31 +6,32 @@ import mailerConfig, { MailerConfig } from "src/config/mailer.config";
 @Injectable()
 export class SMTPProvider {
 
+    private readonly logger = new Logger(SMTPProvider.name)
     private transporter:Transporter
     constructor(@Inject(mailerConfig.KEY)private readonly mailerConfiguration:ConfigType<typeof MailerConfig>){
-        console.log(mailerConfiguration)
         try{
+            const port = parseInt(this.mailerConfiguration.port!)
             this.transporter = nodemailer.createTransport({
             host: this.mailerConfiguration.host,
-            port: parseInt(this.mailerConfiguration.port!),
-            secure:false,
+            port,
+            secure:port === 465,
+            connectionTimeout:10_000,
+            socketTimeout:20_000,
             auth:{
                 user: this.mailerConfiguration.user,
                 pass: this.mailerConfiguration.password
             }
         })
-         console.log("SMTP transporter initialized successfully.");
 
         }catch(err){
-            console.log("SMTP transporter initialization failed!")
+            this.logger.error("SMTP transporter initialization failed!", err instanceof Error ? err.stack : err)
         }
-        
-       
     }
 
     async sendMail(to:string, subject:string, body:string){
         if(!this.transporter){
-            throw new Error("transporter does not initialized yet!")
+            this.logger.error("Cannot send mail: SMTP transporter is not initialized.")
+            return
         }
 
         try{
@@ -41,8 +42,7 @@ export class SMTPProvider {
             html:body
         })
         }catch(err){
-            console.log(err)
-            console.log("sending failed... ")
+            this.logger.error(`Sending "${subject}" failed`, err instanceof Error ? err.stack : err)
         }
     }
 }

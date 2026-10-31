@@ -4,6 +4,7 @@ import { PrismaService } from "../prisma/prisma.service";
 import { UpdatePasswordDto } from "./dtos/UpdatePasswordDto";
 import { EncoderProvider } from "../auth/providers/encoder.provider";
 import { FileUploadService } from "../file-upload/file-upload.service";
+import { AuthProvider } from "../auth/providers/AuthProvider";
 
 @Injectable()
 export class ProfileService {
@@ -11,6 +12,7 @@ export class ProfileService {
         private readonly prismaService: PrismaService,
         private readonly encoder: EncoderProvider,
         private readonly fileUploadService: FileUploadService,
+        private readonly authProvider: AuthProvider,
     ) {}
 
     async getUserProfile(userId: number) {
@@ -47,7 +49,7 @@ export class ProfileService {
             profileData.phone = updateProfileDto.phone;
         }
         if (file) {
-            const uploaded = await this.fileUploadService.uploadFile(file);
+            const uploaded = await this.fileUploadService.uploadFile(file, userId);
             profileData.avatar_url = uploaded.filePath;
         }
 
@@ -105,12 +107,19 @@ export class ProfileService {
 
         const updatedUser = await this.prismaService.baseUser.update({
             where: { id: userId },
-            data: { password: hashedPassword },
+            data: { password: hashedPassword, password_changed_at: new Date() },
             omit: { password: true },
             include: { profile: true },
         });
 
-        return this.withProfileMetadata(updatedUser);
+        // Every other session is now invalid; this one stays signed in with a new token
+        const accessToken = this.authProvider.signToken({
+            id: updatedUser.id,
+            role: updatedUser.role,
+            email: updatedUser.email,
+        });
+
+        return { user: this.withProfileMetadata(updatedUser), access_token: accessToken };
     }
 
     private withProfileMetadata<T extends { seller_tier?: string | null } | null>(user: T) {

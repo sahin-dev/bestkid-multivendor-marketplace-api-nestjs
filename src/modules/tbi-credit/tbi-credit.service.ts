@@ -8,9 +8,11 @@ import {
     UnauthorizedException,
 } from "@nestjs/common";
 import type { ConfigType } from "@nestjs/config";
+import { Cron, CronExpression } from "@nestjs/schedule";
 import { createHmac, timingSafeEqual } from "crypto";
 import { CurrencyPreference, PaymentProvider, PaymentStatus, Prisma, SellerTier } from "generated/prisma/client";
 import tbiCreditConfig, { TbiCreditConfig } from "src/config/tbi-credit.config";
+import { getSellerFeePercent } from "src/config/seller-fee";
 import { CurrencyConversionService } from "../currency/currency.service";
 import { OrderService } from "../order/order.service";
 import { CheckoutSummaryQueryDto } from "../order/dtos/checkout-flow.dto";
@@ -110,7 +112,7 @@ export class TbiCreditService {
             country: dto.country,
             couponCode: dto.couponCode,
             acceptedTerms: true,
-        });
+        }, this.config.reservation_minutes);
         const orderIds = orderResult.orders.map((order: any) => order.id);
         const merchantOrderReference = this.buildMerchantOrderReference(orderIds);
         const cartSplitPlan = await this.buildCartSplitPlan(
@@ -213,7 +215,7 @@ export class TbiCreditService {
             country: dto.country,
             couponCode: dto.couponCode,
             acceptedTerms: true,
-        });
+        }, this.config.reservation_minutes);
         const orderId = orderResult.order.id;
         const merchantOrderReference = this.buildMerchantOrderReference([orderId]);
 
@@ -317,10 +319,81 @@ export class TbiCreditService {
             throw new NotFoundException("No TBI payment transaction was found for this status update.");
         }
 
-        return this.applyProviderStatus(transaction.id, payload);
+        // This endpoint is public and approving a payment releases goods, so unless the body is
+        // signed it is only a hint to go and ask TBI for the real status of this application.
+        const metadata = this.toMetadataObject(transaction.metadata);
+        const applicationOrderId = this.getMetadataString(metadata.tbiOrderId);
+        const token = this.getMetadataString(metadata.tbiToken);
+
+        if (applicationOrderId && token) {
+            const statusPayload = await this.client.getApplicationStatus(applicationOrderId, token);
+            return this.applyProviderStatus(transaction.id, statusPayload);
+        }
+
+        if (this.config.webhook_secret) {
+            return this.applyProviderStatus(transaction.id, payload);
+        }
+
+        throw new UnauthorizedException("TBI status update could not be verified.");
     }
 
-    async markRefundRequiresManualProcessing(returnRequestId: number, requestedAmount?: number) {
+    /**
+     * Status webhooks can be lost, and a buyer can walk away from an application. Open applications
+     * are polled so a bank approval is never missed and held items do not stay held forever.
+     */
+    @Cron(CronExpression.EVERY_30_MINUTES)
+    async reconcileOpenApplications() {
+        if (!this.config.enabled) {
+            return;
+        }
+
+        const transactions = await this.prismaService.paymentTransaction.findMany({
+            where: {
+                provider: PaymentProvider.TBI_CREDIT,
+                status: { in: [PaymentStatus.PENDING, PaymentStatus.PROCESSING] },
+                createdAt: { lt: new Date(Date.now() - 15 * 60 * 1000) },
+            },
+            orderBy: { createdAt: "asc" },
+            take: 50,
+        });
+
+        const expiredBefore = new Date(Date.now() - this.config.reservation_minutes * 60 * 1000);
+
+        for (const transaction of transactions) {
+            try {
+                const metadata = this.toMetadataObject(transaction.metadata);
+                const tbiOrderId = this.getMetadataString(metadata.tbiOrderId);
+                const token = this.getMetadataString(metadata.tbiToken);
+
+                const updated =
+                    tbiOrderId && token
+                        ? await this.applyProviderStatus(
+                              transaction.id,
+                              await this.client.getApplicationStatus(tbiOrderId, token),
+                          )
+                        : null;
+
+                const stillOpen = !updated || updated.status === PaymentStatus.PROCESSING;
+                if (stillOpen && transaction.createdAt < expiredBefore) {
+                    await this.applyProviderStatus(transaction.id, {
+                        Status: "cancelled",
+                        Message: "Cancelled: no bank decision within the reservation window.",
+                    });
+                }
+            } catch (error) {
+                this.logger.error(
+                    `Failed to reconcile TBI transaction ${transaction.id}`,
+                    error instanceof Error ? error.stack : error,
+                );
+            }
+        }
+    }
+
+    /**
+     * TBI has no refund API, so a financed order is refunded by the bank. A seller is sent to
+     * support; an admin marks the return complete once the bank has confirmed the refund.
+     */
+    async getManualRefund(returnRequestId: number, requestedAmount?: number, confirmedByAdmin = false) {
         const request = await this.prismaService.returnRequest.findUnique({
             where: { id: returnRequestId },
             include: { orderItem: { include: { order: true } } },
@@ -329,14 +402,20 @@ export class TbiCreditService {
             throw new NotFoundException(`Return request with ID ${returnRequestId} not found`);
         }
 
-        const transaction = await this.findTransactionForOrder(request.orderItem.order.id);
+        const order = request.orderItem.order;
+        const transaction = await this.paymentService.findPaidTransactionForOrder(order.id, order.userId);
         if (!transaction || transaction.provider !== PaymentProvider.TBI_CREDIT) {
             return null;
         }
+
+        if (confirmedByAdmin) {
+            return { refund_amount: requestedAmount ?? request.orderItem.price };
+        }
+
         const metadata = this.toMetadataObject(transaction.metadata);
 
         throw new BadRequestException({
-            message: "This order was financed with TBI Credit. Process the refund/cancellation in the TBI merchant portal or with TBI support, then update the return after the bank confirms it.",
+            message: "This order was financed with TBI Credit. Process the refund/cancellation in the TBI merchant portal or with TBI support, then an admin can complete the return after the bank confirms it.",
             provider: "tbi_credit",
             transaction_id: transaction.id,
             tbi_order_id: metadata.tbiOrderId ?? null,
@@ -357,15 +436,28 @@ export class TbiCreditService {
         const providerStatus = this.getProviderStatusLabel(payload);
         const applicationId = this.getProviderValue(payload, ["CreditApplicationId", "credit_application_id", "applicationId"]);
 
+        // A settled payment is final here: orders have moved on, so a later bank event needs a person
+        if (transaction.status === PaymentStatus.SUCCEEDED && state !== "approved") {
+            if (state !== "pending") {
+                this.logger.error(`TBI reported "${providerStatus}" for already approved transaction ${transaction.id}: review it with the bank.`);
+            }
+            return this.formatTransactionStatus(transaction);
+        }
+
         if (state === "approved") {
             if (transaction.status !== PaymentStatus.SUCCEEDED) {
                 const orderIds = this.getOrderIdsFromMetadata(metadata);
-                await this.orderService.finalizePaidOrders({
+                const { rejected } = await this.orderService.finalizePaidOrders({
                     orderIds,
                     cartId: this.numberFromMetadata(metadata.cartId),
                     cartItemIds: this.numberArrayFromMetadata(metadata.cartItemIds),
                     couponId: this.numberFromMetadata(metadata.couponId),
+                    paymentTransactionId: transaction.id,
                 });
+
+                if (rejected.length) {
+                    this.logger.error(`TBI approved transaction ${transaction.id} but orders ${rejected.join(",")} can no longer be fulfilled: cancel them with the bank.`);
+                }
             }
 
             const updated = await this.paymentService.updateProviderStatus(transaction.id, {
@@ -657,27 +749,13 @@ export class TbiCreditService {
     }
 
     private calculatePaymentSplit(amount: number, sellerTier: SellerTier) {
-        const platformFeePercent = this.getSellerFeePercent(sellerTier);
+        const platformFeePercent = getSellerFeePercent(sellerTier);
         const platformFeeAmount = this.roundMoney((amount * platformFeePercent) / 100);
         return {
             platformFeePercent,
             platformFeeAmount,
             sellerTransferAmount: this.roundMoney(Math.max(0, amount - platformFeeAmount)),
         };
-    }
-
-    private getSellerFeePercent(sellerTier: SellerTier) {
-        const configuredPercent = Number(
-            {
-                [SellerTier.BASIC_SELLER]: process.env.STRIPE_BASIC_SELLER_FEE_PERCENT ?? 10,
-                [SellerTier.STANDARD_SELLER]: process.env.STRIPE_STANDARD_SELLER_FEE_PERCENT ?? 10,
-                [SellerTier.PREMIUM_SELLER]: process.env.STRIPE_PREMIUM_SELLER_FEE_PERCENT ?? 10,
-            }[sellerTier],
-        );
-        if (!Number.isFinite(configuredPercent) || configuredPercent < 0 || configuredPercent > 100) {
-            throw new BadRequestException("Seller fee percent must be a number between 0 and 100.");
-        }
-        return configuredPercent;
     }
 
     private async getSellerPaymentProfiles(sellerIds: number[]) {
@@ -731,38 +809,20 @@ export class TbiCreditService {
         return transaction;
     }
 
-    private async findTransactionForOrder(orderId: number) {
-        const direct = await this.prismaService.paymentTransaction.findFirst({
-            where: {
-                orderId,
-                status: { in: [PaymentStatus.SUCCEEDED, PaymentStatus.PROCESSING, PaymentStatus.PENDING, PaymentStatus.REFUNDED] },
-            },
-            orderBy: { createdAt: "desc" },
-        });
-        if (direct) {
-            return direct;
-        }
-
-        const transactions = await this.prismaService.paymentTransaction.findMany({
-            where: { status: { in: [PaymentStatus.SUCCEEDED, PaymentStatus.PROCESSING, PaymentStatus.PENDING, PaymentStatus.REFUNDED] } },
-            orderBy: { createdAt: "desc" },
-        });
-        return transactions.find((transaction) => this.getOrderIdsFromMetadata(this.toMetadataObject(transaction.metadata)).includes(orderId)) ?? null;
-    }
-
     private normalizePaymentState(payload: Record<string, any>): TbiPaymentState {
         const value = this.getProviderStatusLabel(payload).toLowerCase();
-        if (value.includes("approved") || value === "3" || value === "paid") {
-            return "approved";
-        }
+        // Negative outcomes first, so "not approved" can never read as an approval
         if (value.includes("cancel")) {
             return "cancelled";
         }
-        if (value.includes("reject")) {
+        if (value.includes("reject") || value.includes("declin") || value.includes("not approved")) {
             return "rejected";
         }
         if (value.includes("fail") || value.includes("error")) {
             return "failed";
+        }
+        if (value.includes("approved") || value === "3" || value === "paid") {
+            return "approved";
         }
         return "pending";
     }
@@ -817,7 +877,7 @@ export class TbiCreditService {
     }
 
     private getStatusUrl() {
-        const baseUrl = process.env.SWAGGER_SERVER_URL ?? process.env.APP_URL;
+        const baseUrl = process.env.API_PUBLIC_URL ?? process.env.SWAGGER_SERVER_URL ?? process.env.APP_URL;
         return baseUrl ? `${baseUrl.replace(/\/+$/, "")}/tbi-credit/webhook` : "";
     }
 
@@ -841,7 +901,7 @@ export class TbiCreditService {
         if (!trimmedUrl.startsWith("/")) {
             return "";
         }
-        const baseUrl = process.env.SWAGGER_SERVER_URL?.trim();
+        const baseUrl = (process.env.API_PUBLIC_URL ?? process.env.SWAGGER_SERVER_URL)?.trim();
         return baseUrl ? `${baseUrl.replace(/\/+$/, "")}${trimmedUrl}` : "";
     }
 
@@ -862,6 +922,7 @@ export class TbiCreditService {
         }
     }
 
+    // The stored metadata holds the TBI access token, so it is never echoed back to the client
     private formatTransactionStatus(transaction: any) {
         const metadata = this.toMetadataObject(transaction.metadata);
         return {
@@ -876,7 +937,6 @@ export class TbiCreditService {
             redirect_url: transaction.provider_redirect_url,
             amount: transaction.amount,
             currency: transaction.currency,
-            metadata: transaction.metadata,
         };
     }
 

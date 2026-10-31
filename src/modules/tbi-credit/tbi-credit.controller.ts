@@ -2,6 +2,7 @@ import { Body, Controller, Get, Headers, Param, Post, Query, Req } from "@nestjs
 import type { RawBodyRequest } from "@nestjs/common";
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { Request } from "express";
+import { SkipThrottle, Throttle } from "@nestjs/throttler";
 import { Public } from "src/common/decorators";
 import { GetUser } from "src/common/decorators";
 import { CreateTbiBuyNowSessionDto, CreateTbiCheckoutSessionDto, TbiCalculationsQueryDto } from "./dtos/tbi-credit.dto";
@@ -25,6 +26,7 @@ export class TbiCreditController {
     }
 
     @Post("checkout-session")
+    @Throttle({ default: { limit: 20, ttl: 60_000 } })
     @ApiBearerAuth("access-token")
     @ApiOperation({ summary: "Create a TBI Credit application for cart checkout" })
     @ApiBody({ type: CreateTbiCheckoutSessionDto })
@@ -34,6 +36,7 @@ export class TbiCreditController {
     }
 
     @Post("buy-now-session")
+    @Throttle({ default: { limit: 20, ttl: 60_000 } })
     @ApiBearerAuth("access-token")
     @ApiOperation({ summary: "Create a TBI Credit application for direct Buy Now checkout" })
     @ApiBody({ type: CreateTbiBuyNowSessionDto })
@@ -51,6 +54,7 @@ export class TbiCreditController {
     }
 
     @Public()
+    @SkipThrottle()
     @Post("webhook")
     @ApiOperation({ summary: "Receive TBI Credit status updates" })
     @ApiResponse({ status: 201, description: "TBI status update received" })

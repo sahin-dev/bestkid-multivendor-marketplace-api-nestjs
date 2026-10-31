@@ -1,10 +1,16 @@
 import { Injectable, NotFoundException, BadRequestException } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
+import { UserService } from "../../auth/providers/user.service";
+import { PaymentService } from "../../payment/payment.service";
 import { OrderStatus, SellerTier, UserRole } from "generated/prisma/client";
 
 @Injectable()
 export class AdminUserService {
-    constructor(private readonly prismaService: PrismaService) {}
+    constructor(
+        private readonly prismaService: PrismaService,
+        private readonly userService: UserService,
+        private readonly paymentService: PaymentService,
+    ) {}
 
     async findAllUsers(page = 1, limit = 10, search?: string, role?: UserRole, isBlocked?: boolean) {
         const skip = (page - 1) * limit;
@@ -203,34 +209,19 @@ export class AdminUserService {
             throw new BadRequestException("Admin users cannot be deleted");
         }
 
-        return this.prismaService.$transaction(async (tx) => {
-            // Delete reviews
-            await tx.productReview.deleteMany({ where: { userId: id } });
-
-            // Delete orders and order items
-            const orders = await tx.order.findMany({ where: { userId: id } });
-            const orderIds = orders.map((o) => o.id);
-            if (orderIds.length > 0) {
-                await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
-                await tx.order.deleteMany({ where: { userId: id } });
-            }
-
-            // Delete OTP verification
-            await tx.otpVerification.deleteMany({ where: { userId: id } });
-
-            // Delete user record
-            const deletedUser = await tx.baseUser.delete({
-                where: { id },
-                include: { profile: true },
-            });
-
-            // Delete profile if it exists
-            if (user.profile_id) {
-                await tx.profile.delete({ where: { id: user.profile_id } });
-            }
-
-            return deletedUser;
+        const activeOrders = await this.prismaService.order.count({
+            where: {
+                OR: [{ userId: id }, { sellerId: id }],
+                status: { in: [OrderStatus.PENDING, OrderStatus.CONFIRMED, OrderStatus.PROCESSING, OrderStatus.SHIPPED] },
+            },
         });
+        if (activeOrders > 0) {
+            throw new BadRequestException("This user has orders in progress and cannot be deleted yet.");
+        }
+
+        await this.userService.anonymizeUser(id);
+
+        return { message: "User deleted successfully" };
     }
 
     private async getBuyingStats(userId: number) {
@@ -255,15 +246,17 @@ export class AdminUserService {
     }
 
     private async getSellingStats(sellerId: number) {
-        const [totalOrders, totalEarnings, totalReturns, totalCanceled] = await Promise.all([
-            this.prismaService.order.count({ where: { sellerId } }),
-            this.prismaService.order.aggregate({
-                where: {
-                    sellerId,
-                    status: { notIn: [OrderStatus.CANCELLED, OrderStatus.REFUNDED] },
-                },
-                _sum: { total: true },
-            }),
+        const seller = await this.prismaService.baseUser.findUnique({
+            where: { id: sellerId },
+            select: { seller_tier: true },
+        });
+
+        const [totalOrders, earnings, totalReturns, totalCanceled] = await Promise.all([
+            this.prismaService.order.count({ where: { sellerId, status: { not: OrderStatus.PENDING } } }),
+            this.paymentService.getSellerEarnings(
+                { sellerId, status: { notIn: [OrderStatus.PENDING, OrderStatus.CANCELLED, OrderStatus.REFUNDED] } },
+                seller?.seller_tier ?? SellerTier.BASIC_SELLER,
+            ),
             this.prismaService.returnRequest.count({
                 where: {
                     orderItem: {
@@ -276,7 +269,7 @@ export class AdminUserService {
 
         return {
             totalOrders,
-            totalEarnings: totalEarnings._sum.total ?? 0,
+            totalEarnings: earnings.net,
             totalReturns,
             totalCanceled,
         };

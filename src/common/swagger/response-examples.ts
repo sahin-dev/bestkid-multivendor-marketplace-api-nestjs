@@ -1682,12 +1682,6 @@ function getRouteSuccessExample(method: string, path: string) {
       message: 'Request successful',
       data: orderDetailExample,
     },
-    'POST /orders/checkout': {
-      success: true,
-      statusCode: 201,
-      message: 'Request successful',
-      data: { orders: [orderDetailExample] },
-    },
     'GET /orders/checkout/summary': {
       success: true,
       statusCode: 200,

@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import type { ConfigType } from "@nestjs/config";
 import { AuthenticationStatus, NotificationType, ProductStatus } from "generated/prisma/client";
 import { createHmac, timingSafeEqual } from "crypto";
@@ -15,6 +15,8 @@ const ACTIVE_REQUEST_STATUSES_EXCLUDED: string[] = ["completed", "error", "FAILE
 
 @Injectable()
 export class LegitGrailsService {
+    private readonly logger = new Logger(LegitGrailsService.name);
+
     constructor(
         private readonly prismaService: PrismaService,
         private readonly client: LegitGrailsClient,
@@ -304,6 +306,10 @@ export class LegitGrailsService {
         secret: string | undefined,
     ) {
         if (!secret) {
+            // Without a secret nothing proves the sender, and a verdict decides what may be sold
+            if (process.env.NODE_ENV === "production") {
+                throw new ForbiddenException("LegitGrails webhook signing is not configured.");
+            }
             return;
         }
         if (!rawBody || !signature || !timestamp) {
@@ -439,7 +445,7 @@ export class LegitGrailsService {
                 NotificationType.AUTHENTICATION,
             );
         } catch (error) {
-            console.error("Failed to send auth notification", error);
+            this.logger.error("Failed to send auth notification", error instanceof Error ? error.stack : error);
         }
     }
 

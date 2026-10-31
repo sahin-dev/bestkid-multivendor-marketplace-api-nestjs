@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiTags } from "@nestjs/swagger";
-import { GetUser } from "src/common/decorators";
+import { GetUser, Roles } from "src/common/decorators";
 import { NotificationService } from "./notification.service";
 import { NotificationQueryDto } from "./dtos/notification-query.dto";
 import { RegisterDeviceTokenDto, UnregisterDeviceTokenDto } from "./dtos/register-device-token.dto";
@@ -32,6 +32,7 @@ export class NotificationController {
     }
 
     @Post("push/retry")
+    @Roles("ADMIN")
     @ApiOperation({ summary: "Process pending push notifications with retry backoff" })
     async processPendingPushNotifications() {
         return this.notificationService.processPendingPushNotifications();

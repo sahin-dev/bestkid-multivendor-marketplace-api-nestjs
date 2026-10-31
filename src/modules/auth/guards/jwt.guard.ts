@@ -1,22 +1,15 @@
-import { BadRequestException, CanActivate, ExecutionContext, Inject, Injectable, UnauthorizedException } from "@nestjs/common";
-import { JwtService } from "@nestjs/jwt";
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from "@nestjs/common";
 import { Request } from "express";
-import { TokenPayload } from "../types/TokenPayload.type"
 import { Reflector } from "@nestjs/core";
 import { PUBLIC_KEY } from "src/common/decorators/public.decorator";
-
-import { type ConfigType } from "@nestjs/config";
-import jwtConfig from "src/config/jwt.config";
 import { AuthProvider } from "../providers/AuthProvider";
 
 @Injectable()
 export class JwtGuard implements CanActivate {
 
-    constructor(private readonly jwtService: JwtService,
+    constructor(
         private readonly reflector: Reflector,
         private readonly authProvider: AuthProvider,
-        @Inject(jwtConfig.KEY)
-        private readonly jwtConfigOptions: ConfigType<typeof jwtConfig>
     ) { }
 
     async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -47,7 +40,10 @@ export class JwtGuard implements CanActivate {
             return true
 
         } catch (err) {
-            throw new BadRequestException("Invalid token!")
+            if (err instanceof ForbiddenException) {
+                throw err
+            }
+            throw new UnauthorizedException("Invalid token!")
         }
 
     }
@@ -55,7 +51,7 @@ export class JwtGuard implements CanActivate {
     private extractToken(request: Request) {
 
         if (!request.headers.authorization) {
-            throw new BadRequestException("authorization header missing")
+            throw new UnauthorizedException("authorization header missing")
         }
         const [type, token] = request.headers.authorization?.split(" ") || []
 
@@ -72,7 +68,7 @@ export class JwtGuard implements CanActivate {
         const user = await this.authProvider.verifyToken(token)
 
         if (user.is_blocked) {
-            throw new BadRequestException('Sorry, your are blocked by the admin.Kindly, Contact support.Thanks')
+            throw new ForbiddenException('Sorry, your are blocked by the admin.Kindly, Contact support.Thanks')
         }
 
         // if(user.is_deleted){

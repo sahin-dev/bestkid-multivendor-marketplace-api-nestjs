@@ -1,8 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { UserService } from "src/modules/auth/providers/user.service";
 import { RegisterUserDto } from "../dtos/register.dto";
 import { SigninDto } from "../dtos/signin.dto";
 import { AuthProvider } from "./AuthProvider";
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { OtpService } from "src/common/providres/OtpGenerator.provider";
 import { SMTPProvider } from "src/common/providres/smtp.provider";
 import { OtpPurpose } from "generated/prisma/enums";
@@ -15,8 +16,6 @@ import { EncoderProvider } from "./encoder.provider";
 
 @Injectable()
 export class AuthService {
-    private readonly logger = new Logger(AuthService.name)
-
     constructor(
         private readonly userService: UserService,
         private readonly authProvider: AuthProvider,
@@ -116,10 +115,9 @@ export class AuthService {
     }
 
     async verifyOtp(verifyOtpDto: verifyOtpDto) {
-        this.logger.debug(verifyOtpDto)
-        const otpVerification = await this.otpService.verifyOtp(verifyOtpDto.requestId, verifyOtpDto.otp)
+        const otpVerification = await this.otpService.verifyOtp(verifyOtpDto.requestId, verifyOtpDto.otp, OtpPurpose.EMAIL_VERIFICATION)
 
-        if (otpVerification?.purpose === OtpPurpose.EMAIL_VERIFICATION && otpVerification?.userId) {
+        if (otpVerification?.userId) {
             const user = await this.userService.emailVerified(otpVerification.userId)
             const accessToken = this.authProvider.signToken({
                 id: user.id,
@@ -156,14 +154,12 @@ export class AuthService {
     }
 
     async verifyResetOtp(dto: VerifyResetOtpDto) {
-        // Delegates to the shared OTP service; verifyOtp marks it verified+used
-        // We need a "verify-only" approach: we verify but keep track via requestId
-        const otp = await this.otpService.verifyOtp(dto.requestId, dto.otp)
+        const otp = await this.otpService.verifyOtp(dto.requestId, dto.otp, OtpPurpose.RESET_PASSWORD)
         return { message: "OTP verified. You may now reset your password.", requestId: otp.requestId }
     }
 
     async adminVerifyResetOtp(dto: VerifyResetOtpDto) {
-        const otp = await this.otpService.verifyOtp(dto.requestId, dto.otp)
+        const otp = await this.otpService.verifyOtp(dto.requestId, dto.otp, OtpPurpose.RESET_PASSWORD)
         const user = otp.userId ? await this.userService.getUserByIdIncludingPassword(otp.userId) : null
 
         if (!user || user.role !== "ADMIN" || user.is_blocked) {
@@ -178,8 +174,7 @@ export class AuthService {
             throw new BadRequestException("Passwords do not match!")
         }
 
-        // Find the verified OTP record using requestId
-        const otp = await this.userService.findVerifiedResetOtp(dto.requestId)
+        const otp = await this.otpService.consumeVerifiedResetRequest(dto.requestId)
         if (!otp || !otp.userId) {
             throw new BadRequestException("Invalid or expired reset request.")
         }
@@ -195,7 +190,7 @@ export class AuthService {
             throw new BadRequestException("Passwords do not match!")
         }
 
-        const otp = await this.userService.findVerifiedResetOtp(dto.requestId)
+        const otp = await this.otpService.consumeVerifiedResetRequest(dto.requestId)
         const user = otp?.userId ? await this.userService.getUserByIdIncludingPassword(otp.userId) : null
 
         if (!otp || !otp.userId || !user || user.role !== "ADMIN" || user.is_blocked) {
@@ -211,7 +206,7 @@ export class AuthService {
     // ─── Private Helpers ─────────────────────────────────────────────────────────
 
     private async sendEmailVerificationEmail(username: string, email: string, otp: string) {
-        this.smtpProvider.sendMail(email, "Email Verification", otpEmailTemplate({ appname: "BestKid", name: username, otp }))
+        await this.smtpProvider.sendMail(email, "Email Verification", otpEmailTemplate({ appname: "BestKid", name: username, otp }))
     }
 
     private async createEmailVerificationOtp(user: { id: number; email: string; profile?: { full_name?: string | null } | null }) {
@@ -221,12 +216,7 @@ export class AuthService {
             new Date(Date.now() + 15 * 60 * 1000),
         )
 
-        try {
-            this.sendEmailVerificationEmail(user.profile?.full_name ?? user.email, user.email, createdOtp.otp)
-        } catch (err) {
-            this.logger.error(err)
-            this.logger.log("sending verification email failed!")
-        }
+        await this.sendEmailVerificationEmail(user.profile?.full_name ?? user.email, user.email, createdOtp.otp)
 
         return createdOtp
     }
@@ -237,9 +227,9 @@ export class AuthService {
 
     private async sendResetPasswordOtp(email: string) {
         const user = await this.userService.getUserByEmail(email)
-        // For security, silently succeed even if email not found
+        // The response is identical for unknown emails, including a requestId, so it reveals nothing
         if (!user) {
-            return { message: "If that email is registered, an OTP has been sent." }
+            return { message: "If that email is registered, an OTP has been sent.", requestId: randomUUID() }
         }
 
         const createdOtp = await this.otpService.create(
@@ -248,15 +238,11 @@ export class AuthService {
             new Date(Date.now() + 15 * 60 * 1000),
         )
 
-        try {
-            this.smtpProvider.sendMail(
-                user.email,
-                "BestKid — Password Reset OTP",
-                otpEmailTemplate({ appname: "BestKid", name: user.profile?.full_name ?? user.email, otp: createdOtp.otp }),
-            )
-        } catch (err) {
-            this.logger.error(err)
-        }
+        await this.smtpProvider.sendMail(
+            user.email,
+            "BestKid — Password Reset OTP",
+            otpEmailTemplate({ appname: "BestKid", name: user.profile?.full_name ?? user.email, otp: createdOtp.otp }),
+        )
 
         return { message: "If that email is registered, an OTP has been sent.", requestId: createdOtp.requestId }
     }
@@ -264,7 +250,7 @@ export class AuthService {
     private async sendAdminResetPasswordOtp(email: string) {
         const user = await this.userService.getUserByEmail(email)
         if (!user || user.role !== "ADMIN" || user.is_blocked) {
-            return { message: "If that admin email is registered, a verification code has been sent." }
+            return { message: "If that admin email is registered, a verification code has been sent.", requestId: randomUUID() }
         }
 
         const createdOtp = await this.otpService.create(
@@ -273,15 +259,11 @@ export class AuthService {
             new Date(Date.now() + 15 * 60 * 1000),
         )
 
-        try {
-            this.smtpProvider.sendMail(
-                user.email,
-                "BestKid Admin - Password Reset OTP",
-                otpEmailTemplate({ appname: "BestKid Admin", name: user.profile?.full_name ?? user.email, otp: createdOtp.otp }),
-            )
-        } catch (err) {
-            this.logger.error(err)
-        }
+        await this.smtpProvider.sendMail(
+            user.email,
+            "BestKid Admin - Password Reset OTP",
+            otpEmailTemplate({ appname: "BestKid Admin", name: user.profile?.full_name ?? user.email, otp: createdOtp.otp }),
+        )
 
         return {
             message: "If that admin email is registered, a verification code has been sent.",

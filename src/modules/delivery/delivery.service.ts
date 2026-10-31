@@ -85,7 +85,7 @@ export class DeliveryService {
             return { partner: null, cost: 0, days_min: null, days_max: null, type: "none" };
         }
 
-        const isDomestic = buyerCountry && sellerCountry && buyerCountry === sellerCountry;
+        const isDomestic = buyerCountry && sellerCountry && buyerCountry.trim().toLowerCase() === sellerCountry.trim().toLowerCase();
 
         if (isDomestic) {
             return {

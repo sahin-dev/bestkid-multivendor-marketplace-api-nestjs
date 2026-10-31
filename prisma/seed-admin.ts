@@ -16,6 +16,10 @@ const prisma = new PrismaClient({ adapter });
 
 const adminEmail = process.env.ADMIN_EMAIL ?? "test_admin@yopmail.com";
 const adminPassword = process.env.ADMIN_PASSWORD ?? "Password123!";
+
+if (process.env.NODE_ENV === "production" && (!process.env.ADMIN_EMAIL || !process.env.ADMIN_PASSWORD)) {
+  throw new Error("ADMIN_EMAIL and ADMIN_PASSWORD must be set when seeding the admin account in production.");
+}
 const adminFullName = process.env.ADMIN_FULL_NAME ?? "BestKid Admin";
 const adminPhone = process.env.ADMIN_PHONE ?? "+359 88 000 0000";
 const adminCountry = process.env.ADMIN_COUNTRY ?? "Bulgaria";
@@ -67,7 +71,6 @@ async function main() {
 
   console.log("Admin seed complete.");
   console.log(`Email: ${adminEmail}`);
-  console.log(`Password: ${adminPassword}`);
 }
 
 main()

@@ -4,53 +4,19 @@ import { AppModule } from './app.module';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { join } from 'path';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
+import compression from 'compression';
+import helmet from 'helmet';
 import { ResponseTransformerInterceptor } from './common/interceptors/responseTransformer.interceptor';
 import { GlobalHttpExceptionHandler } from './common/exceptions/GlobalHttpExceptionHandler';
 import { applySwaggerResponseExamples } from './common/swagger/response-examples';
+import { corsOriginDelegate } from './config/cors.config';
 
-async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
-
-  const configuredOrigins = process.env.CORS_ORIGINS
-    ?.split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean);
-
-  app.enableCors({
-    origin: "*", // Allow all origins
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-    credentials: true,
-   
-  });
-
-  const uploadsDir = join(process.cwd(), 'uploads');
-  app.useStaticAssets(uploadsDir, {
-    prefix: '/uploads/',
-    index: false,
-    redirect: false,
-  });
-  app.setBaseViewsDir(join(__dirname, "..", "views"));
-  app.setViewEngine("hbs");
-
-  app.useGlobalPipes(new ValidationPipe({
-    transform: true,
-    whitelist: true,
-    forbidNonWhitelisted: true
-  }))
-
-
-  const reflector = app.get(Reflector)
-
-  app.useGlobalFilters(new GlobalHttpExceptionHandler())
-  app.useGlobalInterceptors(new ResponseTransformerInterceptor(reflector))
-
-
+function setupSwagger(app: NestExpressApplication) {
   const config = new DocumentBuilder()
     .setTitle('BestKid Api')
     .setDescription('Backend API for the BestKid multivendor marketplace. Use the Bearer auth control with a JWT returned from /auth/login or /auth/admin/login for protected endpoints.')
-    .addServer(process.env.SWAGGER_SERVER_URL!)
+    .addServer(process.env.API_PUBLIC_URL ?? process.env.SWAGGER_SERVER_URL ?? 'http://localhost:3000')
     .setVersion('1.0')
     .addTag('Auth', 'Registration, login, OTP verification, and password reset flows')
     .addTag('Admin Dashboard', 'Admin dashboard cards, activity, and platform earnings')
@@ -90,7 +56,68 @@ async function bootstrap() {
     return document;
   };
   SwaggerModule.setup('docs', app, documentFactory);
+}
+
+async function bootstrap() {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  // Rate limiting keys on the client IP, which the reverse proxy passes in X-Forwarded-For
+  app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS ?? 1));
+  app.disable('x-powered-by');
+
+  app.use(helmet({
+    // Product images are hotlinked by the website and dashboard from another origin
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    contentSecurityPolicy: isProduction ? undefined : false,
+  }));
+  app.use(compression());
+  app.useBodyParser('json', { limit: '2mb' });
+
+  app.enableCors({
+    origin: corsOriginDelegate,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  });
+
+  const uploadsDir = join(process.cwd(), 'uploads');
+  app.useStaticAssets(uploadsDir, {
+    prefix: '/uploads/',
+    index: false,
+    redirect: false,
+    maxAge: '30d',
+    setHeaders: (res) => {
+      // Uploaded files are data: never let a browser execute them on the API origin
+      res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+    },
+  });
+  app.setBaseViewsDir(join(__dirname, "..", "views"));
+  app.setViewEngine("hbs");
+
+  app.useGlobalPipes(new ValidationPipe({
+    transform: true,
+    whitelist: true,
+    forbidNonWhitelisted: true
+  }))
+
+
+  const reflector = app.get(Reflector)
+
+  app.useGlobalFilters(new GlobalHttpExceptionHandler())
+  app.useGlobalInterceptors(new ResponseTransformerInterceptor(reflector))
+
+  if (!isProduction || process.env.ENABLE_SWAGGER === 'true') {
+    setupSwagger(app);
+  }
+
+  app.enableShutdownHooks();
 
   await app.listen(process.env.PORT ?? 3000);
 }
-bootstrap();
+
+bootstrap().catch((error) => {
+  new Logger('Bootstrap').error(error instanceof Error ? error.message : error);
+  process.exit(1);
+});

@@ -1,5 +1,7 @@
 import { Body, Controller, Get, Patch, Req, UploadedFile, UseInterceptors } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
+import { Throttle } from "@nestjs/throttler";
+import { uploadOptions } from "src/common/upload/upload.options";
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { UpdateProfileDto } from "./dtos/updateProfile.dto";
 import { ProfileService } from "./profile.service";
@@ -50,7 +52,7 @@ export class ProfileController{
             },
         },
     })
-    @UseInterceptors(FileInterceptor('file'))
+    @UseInterceptors(FileInterceptor('file', uploadOptions))
     async updateUserProfile(@Req() request:Request, @Body()updateProfileDto:UpdateProfileDto, @UploadedFile() file?:Express.Multer.File){
 
         const user = request['user'] as User
@@ -63,17 +65,21 @@ export class ProfileController{
     }   
 
     @Patch("update-password")
+    @Throttle({ default: { limit: 10, ttl: 60_000 } })
     @ApiOperation({ summary: "Change the authenticated user's password" })
     @ApiBody({ type: UpdatePasswordDto })
     async updatePassword(@Req() request:Request, @Body() updatePasswordDto:UpdatePasswordDto){
 
         const user = request['user'] as User
 
-        const updatedProfile = await this.profileService.updatePassword(user.id, updatePasswordDto)
+        const { user: updatedUser, access_token } = await this.profileService.updatePassword(user.id, updatePasswordDto)
 
-        return plainToInstance(UserResponseDto, updatedProfile, {
-            excludeExtraneousValues:true
-        })
+        return {
+            ...plainToInstance(UserResponseDto, updatedUser, {
+                excludeExtraneousValues:true
+            }),
+            access_token,
+        }
     }
 
 

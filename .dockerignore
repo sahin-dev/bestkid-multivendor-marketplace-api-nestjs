@@ -7,6 +7,7 @@ coverage
 .gitignore
 .env
 .env.*
+!.env.example
 Dockerfile*
 .dockerignore
 .vscode

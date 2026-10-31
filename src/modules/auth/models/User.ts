@@ -4,6 +4,7 @@ import { plainToInstance } from "class-transformer";
 
 export class User implements BaseUser {
     id: number;
+    password_changed_at: Date | null;
     email: string;
     password: string;
     email_verifird: boolean;

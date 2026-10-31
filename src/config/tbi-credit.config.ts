@@ -17,6 +17,8 @@ export const TbiCreditConfig = () => {
         currency: (process.env.TBI_CURRENCY ?? defaultCurrency).trim().toUpperCase(),
         timeout_ms: Number(process.env.TBI_TIMEOUT_MS ?? 15000),
         webhook_secret: process.env.TBI_WEBHOOK_SECRET,
+        // A bank decision can take days, so the items stay held far longer than for a card payment
+        reservation_minutes: Number(process.env.TBI_RESERVATION_MINUTES ?? 48 * 60),
     };
 };
 

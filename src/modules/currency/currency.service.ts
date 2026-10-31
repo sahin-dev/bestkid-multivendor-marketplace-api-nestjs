@@ -78,7 +78,9 @@ export class CurrencyConversionService {
         const currencyQuery = targetCurrencies.join(",");
 
         try {
-            const response = await fetch(`${this.apiUrl}?from=${this.baseCurrency}&to=${currencyQuery}`);
+            const response = await fetch(`${this.apiUrl}?from=${this.baseCurrency}&to=${currencyQuery}`, {
+                signal: AbortSignal.timeout(5000),
+            });
             if (!response.ok) {
                 throw new Error(`Exchange rate provider responded with ${response.status}`);
             }
@@ -100,7 +102,7 @@ export class CurrencyConversionService {
                 "Live exchange rate fetch failed; falling back to cached/static rates for pricing conversion.",
                 error instanceof Error ? error.message : String(error),
             );
-            return { ...this.fallbackRates };
+            return { ...this.cache };
         }
     }
 }

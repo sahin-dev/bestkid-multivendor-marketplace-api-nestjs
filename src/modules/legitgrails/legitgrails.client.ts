@@ -136,7 +136,6 @@ export class LegitGrailsClient {
             const data = text ? JSON.parse(text) : undefined;
 
             if (!response.ok) {
-                console.log(`LegitGrails request failed with status ${response.status}:`, data);
                 throw this.toHttpException(response, data);
             }
 

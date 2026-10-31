@@ -8,6 +8,8 @@ model BaseUser {
   profile        Profile?  @relation(fields: [profile_id], references: [id])
   role           UserRole @default(USER)
   fcmToken       String?  @map("fcm_token")
+  // Tokens issued before this moment are rejected
+  password_changed_at DateTime?
 
   // Stripe seller onboarding
   stripe_account_id          String?

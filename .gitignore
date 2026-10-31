@@ -41,6 +41,7 @@ uploads/
 .env.test.local
 .env.production.local
 .env.local
+.env.docker
 
 # Firebase / secret credentials
 firebase-service-account*.json

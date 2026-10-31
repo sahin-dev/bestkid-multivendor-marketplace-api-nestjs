@@ -2,6 +2,7 @@ import {
     BadRequestException,
     ForbiddenException,
     Injectable,
+    Logger,
     NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
@@ -13,6 +14,7 @@ import {
 } from "./dtos/return-query.dto";
 import {
     OrderStatus,
+    PaymentProvider,
     ReturnStatus,
     NotificationType,
 } from "generated/prisma/client";
@@ -22,15 +24,19 @@ import { ChatService } from "../chat/chat.service";
 import { assertEntityExists } from "src/common/validators/entity-exists.validator";
 import { StripeService } from "../stripe/stripe.service";
 import { TbiCreditService } from "../tbi-credit/tbi-credit.service";
+import { PaymentService } from "../payment/payment.service";
 
 @Injectable()
 export class ReturnService {
+    private readonly logger = new Logger(ReturnService.name);
+
     constructor(
         private readonly prismaService: PrismaService,
         private readonly notificationService: NotificationService,
         private readonly chatService: ChatService,
         private readonly stripeService: StripeService,
         private readonly tbiCreditService: TbiCreditService,
+        private readonly paymentService: PaymentService,
     ) {}
 
     async createReturn(userId: number, dto: CreateReturnDto) {
@@ -91,7 +97,7 @@ export class ReturnService {
                 NotificationType.RETURN,
             );
         } catch (e) {
-            console.error("Failed to send notification to seller", e);
+            this.logger.error("Failed to send notification to seller", e);
         }
 
         return this.formatReturnDetail(request);
@@ -155,7 +161,20 @@ export class ReturnService {
             }
         }
 
-        return this.formatReturnDetail(request, userId);
+        const detail = await this.formatReturnDetail(request, userId);
+        if (role !== "ADMIN") {
+            return detail;
+        }
+
+        const order = request.orderItem.order;
+        const transaction = await this.paymentService.findPaidTransactionForOrder(order.id, order.userId);
+
+        return {
+            ...detail,
+            payment: transaction ? { provider: transaction.provider, currency: transaction.currency } : null,
+            refund_is_manual: transaction?.provider === PaymentProvider.TBI_CREDIT,
+            default_refund_amount: Math.min(request.orderItem.price, order.total),
+        };
     }
 
     async findSellerReturns(sellerId: number, query: ReturnQueryDto) {
@@ -236,6 +255,7 @@ export class ReturnService {
             data: this.getReturnUpdateData(dto, refundResult),
             include: this.getReturnDetailInclude(),
         });
+        await this.reduceSellerEarnings(updated.orderItem.order.id, refundResult);
         await this.markOrderRefundedIfFullyReturned(updated.orderItem.order.id);
 
         // Notify buyer
@@ -247,7 +267,7 @@ export class ReturnService {
                 NotificationType.RETURN,
             );
         } catch (e) {
-            console.error("Failed to notify buyer", e);
+            this.logger.error("Failed to notify buyer", e);
         }
 
         return this.formatReturnDetail(updated, sellerId);
@@ -276,7 +296,7 @@ export class ReturnService {
         ]);
 
         return {
-            data: data.map((request) => this.formatReturnCard(request)),
+            data: data.map((request) => this.formatSellerReturnCard(request)),
             meta: {
                 total,
                 page,
@@ -300,16 +320,21 @@ export class ReturnService {
             );
         }
 
+        this.validateReturnStatusTransition(request.status, dto.status);
+        this.validateSellerReturnUpdate(dto);
+
         const refundResult = await this.refundIfReturnAccepted(
             returnId,
             request.refunded_at,
             dto,
+            true,
         );
         const updated = await this.prismaService.returnRequest.update({
             where: { id: returnId },
             data: this.getReturnUpdateData(dto, refundResult),
             include: this.getReturnDetailInclude(),
         });
+        await this.reduceSellerEarnings(updated.orderItem.order.id, refundResult);
         await this.markOrderRefundedIfFullyReturned(updated.orderItem.order.id);
 
         // Notify buyer
@@ -321,7 +346,7 @@ export class ReturnService {
                 NotificationType.ORDER,
             );
         } catch (e) {
-            console.error("Failed to notify buyer", e);
+            this.logger.error("Failed to notify buyer", e);
         }
 
         return this.formatReturnDetail(updated);
@@ -659,32 +684,55 @@ export class ReturnService {
         }
     }
 
+    // Approving a return only tells the buyer where to send the item back. The money moves when
+    // the return is completed, once the seller has the item again.
     private async refundIfReturnAccepted(
         returnId: number,
         alreadyRefundedAt: Date | null,
         dto: UpdateReturnStatusDto,
+        confirmedByAdmin = false,
     ) {
-        const refundableStatuses: ReturnStatus[] = [
-            ReturnStatus.APPROVED,
-            ReturnStatus.COMPLETED,
-        ];
-        if (!refundableStatuses.includes(dto.status)) {
+        if (dto.status !== ReturnStatus.COMPLETED || alreadyRefundedAt) {
             return null;
         }
 
-        if (alreadyRefundedAt) {
-            return null;
-        }
-
-        await this.tbiCreditService.markRefundRequiresManualProcessing(
+        const manualRefund = await this.tbiCreditService.getManualRefund(
             returnId,
             dto.refund_amount,
+            confirmedByAdmin,
         );
+        if (manualRefund) {
+            return manualRefund;
+        }
 
         return this.stripeService.refundReturnRequestPayment(
             returnId,
             dto.refund_amount,
         );
+    }
+
+    // Keeps earnings and any manual payout honest: the seller no longer earns what was refunded
+    private async reduceSellerEarnings(
+        orderId: number,
+        refundResult: { refund_amount?: number; refund_amount_usd?: number; already_refunded?: boolean } | null,
+    ) {
+        const refundedUsd = refundResult?.refund_amount_usd ?? refundResult?.refund_amount;
+        if (!refundedUsd || refundResult?.already_refunded) {
+            return;
+        }
+
+        const order = await this.prismaService.order.findUnique({ where: { id: orderId } });
+        if (order?.seller_net_amount === null || order?.seller_net_amount === undefined) {
+            return;
+        }
+
+        const keptShare = 1 - (order.platform_fee_percent ?? 0) / 100;
+        const remaining = order.seller_net_amount - refundedUsd * keptShare;
+
+        await this.prismaService.order.update({
+            where: { id: orderId },
+            data: { seller_net_amount: Math.max(0, Math.round(remaining * 100) / 100) },
+        });
     }
 
     private async markOrderRefundedIfFullyReturned(orderId: number) {
@@ -720,11 +768,7 @@ export class ReturnService {
         refundResult?: { refund_amount?: number } | null,
     ) {
         const refundAmount = refundResult?.refund_amount ?? dto.refund_amount;
-        const refundedAt = refundResult
-            ? new Date()
-            : dto.status === ReturnStatus.COMPLETED
-              ? new Date()
-              : undefined;
+        const refundedAt = refundResult ? new Date() : undefined;
 
         return {
             status: dto.status,

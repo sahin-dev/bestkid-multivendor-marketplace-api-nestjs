@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
 import { CurrencyPreference, LanguagePreference, OrderStatus, ReturnStatus } from "generated/prisma/client";
 import { EncoderProvider } from "../auth/providers/encoder.provider";
+import { UserService } from "../auth/providers/user.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateAccountAddressDto, UpdateAccountAddressDto } from "./dtos/account-address.dto";
 
@@ -16,6 +17,7 @@ export class AccountService {
     constructor(
         private readonly prismaService: PrismaService,
         private readonly encoder: EncoderProvider,
+        private readonly userService: UserService,
     ) {}
 
     async getSettings(userId: number) {
@@ -225,66 +227,7 @@ export class AccountService {
             throw new ConflictException(restriction);
         }
 
-        await this.prismaService.$transaction(async (tx) => {
-            await tx.userAddress.deleteMany({ where: { userId } });
-            await tx.notification.deleteMany({ where: { userId } });
-            await tx.otpVerification.deleteMany({ where: { userId } });
-            await tx.recentlyView.deleteMany({ where: { userId } });
-            await tx.wishlistItem.deleteMany({ where: { userId } });
-            await tx.sellerDeliveryOption.deleteMany({ where: { sellerId: userId } });
-
-            const cart = await tx.cart.findUnique({ where: { userId } });
-            if (cart) {
-                await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
-                await tx.cart.delete({ where: { id: cart.id } });
-            }
-
-            const chatRooms = await tx.chatRoom.findMany({
-                where: { OR: [{ buyerId: userId }, { sellerId: userId }] },
-                select: { id: true },
-            });
-            const chatRoomIds = chatRooms.map((room) => room.id);
-            if (chatRoomIds.length > 0) {
-                await tx.chatMessage.deleteMany({ where: { chatRoomId: { in: chatRoomIds } } });
-                await tx.chatRoom.deleteMany({ where: { id: { in: chatRoomIds } } });
-            }
-
-            await tx.productReview.deleteMany({ where: { userId } });
-
-            const products = await tx.product.findMany({
-                where: { userId },
-                select: { id: true },
-            });
-            const productIds = products.map((product) => product.id);
-            if (productIds.length > 0) {
-                await tx.cartItem.deleteMany({ where: { productId: { in: productIds } } });
-                await tx.recentlyView.deleteMany({ where: { productId: { in: productIds } } });
-                await tx.wishlistItem.deleteMany({ where: { productId: { in: productIds } } });
-                await tx.productReview.deleteMany({ where: { productId: { in: productIds } } });
-                await tx.product.deleteMany({ where: { id: { in: productIds } } });
-            }
-
-            const orders = await tx.order.findMany({
-                where: { OR: [{ userId }, { sellerId: userId }] },
-                select: { id: true },
-            });
-            const orderIds = orders.map((order) => order.id);
-            if (orderIds.length > 0) {
-                await tx.returnRequest.deleteMany({
-                    where: { orderItem: { orderId: { in: orderIds } } },
-                });
-                await tx.orderItem.deleteMany({ where: { orderId: { in: orderIds } } });
-                await tx.order.deleteMany({ where: { id: { in: orderIds } } });
-            }
-
-            await tx.returnRequest.deleteMany({ where: { userId } });
-
-            await tx.baseUser.delete({ where: { id: userId } });
-
-            if (user.profile_id) {
-                await tx.profile.delete({ where: { id: user.profile_id } });
-            }
-        });
+        await this.userService.anonymizeUser(userId);
 
         return { message: "Account deleted successfully" };
     }

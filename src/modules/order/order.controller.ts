@@ -2,10 +2,8 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Patch
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
 import { GetUser, Roles } from "src/common/decorators";
 import { OrderService } from "./order.service";
-import { CreateOrderDto } from "./dtos/create-order.dto";
 import { UpdateOrderStatusDto } from "./dtos/update-order-status.dto";
 import { BuyerOrderTab, OrderQueryDto, SellerOrderTab } from "./dtos/order-query.dto";
-import { CheckoutDto } from "./dtos/checkout.dto";
 import { ApplyCouponDto, BuyNowCheckoutSummaryDto, CheckoutSummaryQueryDto } from "./dtos/checkout-flow.dto";
 import { TokenPayload } from "../auth/types/TokenPayload.type";
 import { OrderStatus } from "generated/prisma/client";
@@ -18,23 +16,7 @@ import { CreateReviewDto } from "../product/dtos/create-review.dto";
 export class OrderController {
     constructor(private readonly orderService: OrderService) {}
 
-   
-    @ApiOperation({ summary: "Create an order directly from submitted items", description: "Creates an order for the authenticated buyer. Checkout from cart is preferred for multi-seller carts." })
-    @ApiBody({ type: CreateOrderDto })
-    @ApiResponse({ status: 201, description: "Order created" })
-    async createOrder(@GetUser("id") userId: number, @Body() dto: CreateOrderDto) {
-        return this.orderService.createOrder(userId, dto);
-    }
-
-    @Post("checkout")
-    @ApiOperation({ summary: "Checkout the authenticated user's cart", description: "Groups cart items by seller, resolves delivery options, applies an optional coupon, creates one order per seller, and clears the cart." })
-    @ApiBody({ type: CheckoutDto })
-    @ApiResponse({ status: 201, description: "Checkout completed; returns created orders" })
-    async checkoutFromCart(@GetUser("id") userId: number, @Body() dto: CheckoutDto) {
-        return this.orderService.checkoutFromCart(userId, dto);
-    }
-
-    @Get("checkout/summary")
+       @Get("checkout/summary")
     @ApiOperation({ summary: "Preview checkout summary", description: "Returns seller-grouped cart items, delivery options, saved addresses, optional coupon discount, and price details for the checkout page." })
     @ApiQuery({ name: "sellerIds", required: false, type: [Number] })
     @ApiQuery({ name: "cartItemIds", required: false, type: [Number] })
@@ -127,8 +109,17 @@ export class OrderController {
     @ApiQuery({ name: "page", required: false, type: Number })
     @ApiQuery({ name: "limit", required: false, type: Number })
     @ApiQuery({ name: "status", required: false, enum: OrderStatus })
+    @ApiQuery({ name: "search", required: false, type: String })
     async findAllOrdersAdmin(@Query() query: OrderQueryDto) {
         return this.orderService.findAllOrdersAdmin(query);
+    }
+
+    @Get("admin/:id")
+    @Roles("ADMIN")
+    @ApiOperation({ summary: "Admin: get an order with payment and payout details" })
+    @ApiParam({ name: "id", type: Number })
+    async findOrderByIdAdmin(@Param("id", ParseIntPipe) orderId: number) {
+        return this.orderService.findOrderByIdAdmin(orderId);
     }
 
     @Get(":id")
@@ -143,7 +134,7 @@ export class OrderController {
     }
 
     @Patch(":id/cancel")
-    @ApiOperation({ summary: "Cancel one of my orders", description: "Only pending or confirmed orders can be cancelled." })
+    @ApiOperation({ summary: "Cancel one of my orders", description: "Only pending or confirmed orders can be cancelled. A confirmed order is refunded in full." })
     @ApiParam({ name: "id", type: Number })
     @ApiBody({ type: CancelOrderDto, required: false })
     async cancelOrder(
@@ -168,7 +159,7 @@ export class OrderController {
 
     @Patch("seller/:id/status")
     @Roles("USER", "ADMIN")
-    @ApiOperation({ summary: "Seller: update order fulfillment status", description: "Uses seller transition rules: PENDING -> CONFIRMED -> PROCESSING -> SHIPPED." })
+    @ApiOperation({ summary: "Seller: update order fulfillment status", description: "Uses seller transition rules: CONFIRMED -> PROCESSING -> SHIPPED -> DELIVERED. Orders are confirmed by payment. Cancelling a confirmed order refunds the buyer." })
     @ApiParam({ name: "id", type: Number })
     @ApiBody({ type: UpdateOrderStatusDto })
     async updateSellerOrderStatus(

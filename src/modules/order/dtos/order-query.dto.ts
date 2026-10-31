@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from "@nestjs/swagger";
 import { Type } from "class-transformer";
-import { IsEnum, IsInt, IsOptional, Min } from "class-validator";
+import { IsEnum, IsInt, IsOptional, IsString, MaxLength, Min, Max } from "class-validator";
 import { OrderStatus } from "generated/prisma/client";
 
 export enum BuyerOrderTab {
@@ -30,7 +30,14 @@ export class OrderQueryDto {
     @IsInt()
     @Min(1)
     @ApiPropertyOptional({ default: 10, description: "Number of items per page" })
+    @Max(100)
     limit?: number = 10;
+
+    @IsOptional()
+    @IsString()
+    @MaxLength(100)
+    @ApiPropertyOptional({ description: "Admin only: order number, or buyer or seller email" })
+    search?: string;
 
     @IsOptional()
     @IsEnum(OrderStatus)

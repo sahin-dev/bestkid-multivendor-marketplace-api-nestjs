@@ -12,7 +12,6 @@ import { Transform } from 'class-transformer';
 export function SanitizeUrl(): PropertyDecorator {
 
     return Transform(({ value }) => {
-        console.log(value)
         if (typeof value !== 'string') return value;
         // Replace any "//" NOT preceded by ":" (handles http://, https://, etc.)
         return value.replace(/(?<!:)\/\//g, '/');

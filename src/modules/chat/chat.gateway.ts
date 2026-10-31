@@ -7,22 +7,25 @@ import {
   ConnectedSocket,
   MessageBody,
 } from '@nestjs/websockets';
+import { Logger, UsePipes, ValidationPipe } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { ChatService } from './chat.service';
 import { AuthProvider } from '../auth/providers/AuthProvider';
 import { SendMessageDto } from './dtos/send-message.dto';
+import { corsOriginDelegate } from 'src/config/cors.config';
 
 @WebSocketGateway({
+  maxHttpBufferSize: 64 * 1024,
   cors: {
-    origin: (origin, callback) => {
-      callback(null, true);
-    },
+    origin: corsOriginDelegate,
     credentials: true,
     methods: ['GET', 'POST'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   },
 })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  private readonly logger = new Logger(ChatGateway.name);
+
   @WebSocketServer()
   server: Server;
 
@@ -50,14 +53,14 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // Store user in socket object for easy access
       socket.data.user = user;
-      console.log(`Socket client connected: ${socket.id}, User: ${user.id}`);
+      this.logger.debug(`Socket client connected: ${socket.id}, User: ${user.id}`);
     } catch (err) {
       socket.disconnect();
     }
   }
 
   handleDisconnect(socket: Socket) {
-    console.log(`Socket client disconnected: ${socket.id}`);
+    this.logger.debug(`Socket client disconnected: ${socket.id}`);
   }
 
   @SubscribeMessage('join_room')
@@ -76,7 +79,6 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     socket.join(`room_${data.chatRoomId}`);
-    console.log(`User ${user.id} joined room_${data.chatRoomId}`);
   }
 
   @SubscribeMessage('leave_room')
@@ -85,10 +87,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { chatRoomId: number },
   ) {
     socket.leave(`room_${data.chatRoomId}`);
-    console.log(`User ${socket.data.user?.id} left room_${data.chatRoomId}`);
   }
 
   @SubscribeMessage('send_message')
+  @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
   async handleSendMessage(
     @ConnectedSocket() socket: Socket,
     @MessageBody() dto: SendMessageDto,
@@ -131,7 +133,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { chatRoomId: number; isTyping: boolean },
   ) {
     const user = socket.data.user;
-    if (!user) return;
+    if (!user || !socket.rooms.has(`room_${data.chatRoomId}`)) return;
 
     socket.to(`room_${data.chatRoomId}`).emit('user_typing', {
       chatRoomId: data.chatRoomId,

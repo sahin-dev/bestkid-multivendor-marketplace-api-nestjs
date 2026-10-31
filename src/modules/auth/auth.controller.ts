@@ -7,6 +7,7 @@ import { verifyOtpDto } from "./dtos/verifyOtp.dto";
 import { plainToInstance } from "class-transformer";
 import { RegisterUserResponseDto } from "./dtos/RegisterUserResponseDto";
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from "@nestjs/swagger";
+import { Throttle } from "@nestjs/throttler";
 import { Public } from "src/common/decorators";
 import { ResendOtpDto } from "./dtos/ResendOtp.dto";
 import { ForgotPasswordDto } from "./dtos/ForgotPasswordDto";
@@ -21,6 +22,7 @@ export class AuthController {
     constructor(private readonly authService: AuthService) { }
 
     @Post("register")
+    @Throttle({ default: { limit: 5, ttl: 60_000 } })
     @Public()
     @ApiOperation({ summary: "Register a new user — returns OTP requestId for email verification" })
     @ApiBody({ type: RegisterUserDto })
@@ -32,6 +34,7 @@ export class AuthController {
     }
 
     @Post("login")
+    @Throttle({ default: { limit: 10, ttl: 60_000 } })
     @Public()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Login — returns JWT or { email_unverified: true, email_verification_id } or { user_is_blocked: true }" })
@@ -41,6 +44,7 @@ export class AuthController {
     }
 
     @Post("admin/login")
+    @Throttle({ default: { limit: 10, ttl: 60_000 } })
     @Public()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Admin login - returns JWT only for admin accounts or access_denied payload" })
@@ -50,6 +54,7 @@ export class AuthController {
     }
 
     @Post("verify-email")
+    @Throttle({ default: { limit: 10, ttl: 60_000 } })
     @HttpCode(HttpStatus.OK)
     @Public()
     @ApiOperation({ summary: "Verify email OTP" })
@@ -59,6 +64,7 @@ export class AuthController {
     }
 
     @Post("resend-otp")
+    @Throttle({ default: { limit: 5, ttl: 60_000 } })
     @Public()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Resend email verification OTP" })
@@ -70,6 +76,7 @@ export class AuthController {
     // ─── Forgot Password Flow ────────────────────────────────────────────────────
 
     @Post("forgot-password")
+    @Throttle({ default: { limit: 5, ttl: 60_000 } })
     @Public()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Send password reset OTP to email" })
@@ -79,6 +86,7 @@ export class AuthController {
     }
 
     @Post("admin/forgot-password")
+    @Throttle({ default: { limit: 5, ttl: 60_000 } })
     @Public()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Admin: send password reset OTP to email" })
@@ -88,6 +96,7 @@ export class AuthController {
     }
 
     @Post("forgot-password/resend")
+    @Throttle({ default: { limit: 5, ttl: 60_000 } })
     @Public()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Resend password reset OTP to email" })
@@ -97,6 +106,7 @@ export class AuthController {
     }
 
     @Post("admin/forgot-password/resend")
+    @Throttle({ default: { limit: 5, ttl: 60_000 } })
     @Public()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Admin: resend password reset OTP to email" })
@@ -106,6 +116,7 @@ export class AuthController {
     }
 
     @Post("verify-reset-otp")
+    @Throttle({ default: { limit: 10, ttl: 60_000 } })
     @Public()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Verify the password reset OTP" })
@@ -115,6 +126,7 @@ export class AuthController {
     }
 
     @Post("admin/verify-reset-otp")
+    @Throttle({ default: { limit: 10, ttl: 60_000 } })
     @Public()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Admin: verify the password reset OTP" })
@@ -124,6 +136,7 @@ export class AuthController {
     }
 
     @Post("reset-password")
+    @Throttle({ default: { limit: 10, ttl: 60_000 } })
     @Public()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Reset password using verified OTP requestId" })
@@ -133,6 +146,7 @@ export class AuthController {
     }
 
     @Post("admin/reset-password")
+    @Throttle({ default: { limit: 10, ttl: 60_000 } })
     @Public()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Admin: reset password using verified OTP requestId" })

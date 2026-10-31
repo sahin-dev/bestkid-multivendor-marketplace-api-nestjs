@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from "@nestjs/swagger";
 import { Type } from "class-transformer";
-import { IsInt, IsOptional, Min } from "class-validator";
+import { IsInt, IsOptional, Min, Max } from "class-validator";
 
 export class NotificationQueryDto {
     @IsOptional()
@@ -15,5 +15,6 @@ export class NotificationQueryDto {
     @IsInt()
     @Min(1)
     @ApiPropertyOptional({ default: 10 })
+    @Max(100)
     limit?: number = 10;
 }

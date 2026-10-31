@@ -2,6 +2,7 @@ import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Param, ParseIntPi
 import type { RawBodyRequest } from "@nestjs/common";
 import { FileInterceptor, FilesInterceptor } from "@nestjs/platform-express";
 import { ConfigService } from "@nestjs/config";
+import { SkipThrottle } from "@nestjs/throttler";
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiTags, ApiConsumes } from "@nestjs/swagger";
 import type { Request } from "express";
 import { GetUser, Public, Roles } from "src/common/decorators";
@@ -10,6 +11,7 @@ import { SubmitProductAuthenticationDto } from "./dtos/submit-product-authentica
 import { ReuploadAuthenticationPhotosDto } from "./dtos/reupload-authentication-photos.dto";
 import { CreateWebhookDto, CreateWebhookResponseDto, WebhookEndpointDto } from "./dtos/webhook.dto";
 import { LegitGrailsService } from "./legitgrails.service";
+import { MAX_UPLOAD_FILES, uploadOptions } from "src/common/upload/upload.options";
 
 @ApiTags("LegitGrails")
 @Controller()
@@ -114,7 +116,7 @@ export class LegitGrailsController {
     @Post("legitgrails/photos")
     @ApiBearerAuth("access-token")
     @Roles("USER", "ADMIN")
-    @UseInterceptors(FilesInterceptor("photos"))
+    @UseInterceptors(FilesInterceptor("photos", MAX_UPLOAD_FILES, uploadOptions))
     @ApiConsumes("multipart/form-data")
     @ApiOperation({ summary: "Upload photos for LegitGrails authentication" })
     @ApiBody({
@@ -137,7 +139,7 @@ export class LegitGrailsController {
 
     @Get("legitgrails/orders")
     @ApiBearerAuth("access-token")
-    @Roles("USER", "ADMIN")
+    @Roles("ADMIN")
     @ApiOperation({ summary: "List LegitGrails orders" })
     @ApiQuery({ name: "page", required: false, type: Number })
     @ApiQuery({ name: "limit", required: false, type: Number })
@@ -153,7 +155,7 @@ export class LegitGrailsController {
 
     @Get("legitgrails/balance")
     @ApiBearerAuth("access-token")
-    @Roles("USER", "ADMIN")
+    @Roles("ADMIN")
     @ApiOperation({ summary: "Get LegitGrails account credit balance" })
     async getBalance() {
         return this.legitGrailsService.getBalance();
@@ -202,7 +204,7 @@ export class LegitGrailsController {
 
     @Post("legitgrails/webhooks")
     @ApiBearerAuth("access-token")
-    @Roles("USER", "ADMIN")
+    @Roles("ADMIN")
     @ApiOperation({ summary: "Create a LegitGrails webhook endpoint" })
     @ApiBody({ type: CreateWebhookDto })
     async createWebhook(@Body() dto: CreateWebhookDto) {
@@ -211,7 +213,7 @@ export class LegitGrailsController {
 
     @Get("legitgrails/webhooks")
     @ApiBearerAuth("access-token")
-    @Roles("USER", "ADMIN")
+    @Roles("ADMIN")
     @ApiOperation({ summary: "List LegitGrails webhook endpoints" })
     async listWebhooks() {
         return this.legitGrailsService.listWebhooks();
@@ -219,7 +221,7 @@ export class LegitGrailsController {
 
     @Delete("legitgrails/webhooks/:id")
     @ApiBearerAuth("access-token")
-    @Roles("USER", "ADMIN")
+    @Roles("ADMIN")
     @HttpCode(HttpStatus.NO_CONTENT)
     @ApiOperation({ summary: "Delete a LegitGrails webhook endpoint" })
     @ApiParam({ name: "id", type: String })
@@ -229,6 +231,7 @@ export class LegitGrailsController {
 
     @Post("legitgrails/webhook")
     @Public()
+    @SkipThrottle()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "LegitGrails webhook endpoint", description: "Receives order-outcome and update-photos events." })
     async webhook(

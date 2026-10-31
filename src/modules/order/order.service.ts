@@ -1,102 +1,66 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException, ConflictException } from "@nestjs/common";
+import { forwardRef, Inject, Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException, ConflictException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { CreateOrderDto } from "./dtos/create-order.dto";
 import { BuyerOrderTab, OrderQueryDto, SellerOrderTab } from "./dtos/order-query.dto";
 import { CheckoutDto } from "./dtos/checkout.dto";
 import { ApplyCouponDto, BuyNowCheckoutSummaryDto, CheckoutSummaryQueryDto, CreateBuyNowCheckoutSessionDto } from "./dtos/checkout-flow.dto";
 import { DeliveryService } from "../delivery/delivery.service";
-import { AuthenticationStatus, CouponDiscountType, CouponUsageType, CurrencyPreference, OrderCancellationActor, OrderStatus, ProductStatus, NotificationType, Prisma } from "generated/prisma/client";
+import { AuthenticationStatus, CouponDiscountType, CouponUsageType, CurrencyPreference, OrderCancellationActor, OrderStatus, PaymentProvider, ProductStatus, NotificationType, Prisma } from "generated/prisma/client";
 import { NotificationService } from "../notification/notification.service";
 import { CreateReviewDto } from "../product/dtos/create-review.dto";
 import { ChatService } from "../chat/chat.service";
 import { assertEntityExists } from "src/common/validators/entity-exists.validator";
 import { CurrencyConversionService } from "../currency/currency.service";
+import { PaymentService } from "../payment/payment.service";
+import { StripeService } from "../stripe/stripe.service";
+import { SMTPProvider } from "src/common/providres/smtp.provider";
+import { getSellerFeePercent } from "src/config/seller-fee";
+import { newSaleEmail, orderCancelledEmail, orderConfirmationEmail } from "src/common/templates/orderEmails.template";
 
 type CurrencyFormattingOptions = {
     convertCurrency?: boolean;
 };
 
+type CancellationParams = {
+    actor: OrderCancellationActor;
+    actorId?: number;
+    reason?: string;
+    fromStatuses: OrderStatus[];
+    toStatus?: OrderStatus;
+};
+
+// PENDING orders are unpaid checkouts: a seller only ever sees an order once it has been paid
+const SELLER_VISIBLE_STATUSES = Object.values(OrderStatus).filter((status) => status !== OrderStatus.PENDING);
+
+// A paid order that has not left the seller yet puts the unique item back on sale when cancelled
+const RELISTABLE_STATUSES: OrderStatus[] = [OrderStatus.CONFIRMED, OrderStatus.PROCESSING];
+
+// Moving money or restocking is done by the payment-aware paths, so an unpaid order can never be
+// pushed into fulfilment by hand
+const ADMIN_STATUS_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+    [OrderStatus.PENDING]: [OrderStatus.CANCELLED],
+    [OrderStatus.CONFIRMED]: [OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REFUNDED],
+    [OrderStatus.PROCESSING]: [OrderStatus.SHIPPED, OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REFUNDED],
+    [OrderStatus.SHIPPED]: [OrderStatus.DELIVERED, OrderStatus.CANCELLED, OrderStatus.REFUNDED],
+    [OrderStatus.DELIVERED]: [OrderStatus.REFUNDED],
+    [OrderStatus.CANCELLED]: [],
+    [OrderStatus.REFUNDED]: [],
+};
+
 @Injectable()
 export class OrderService {
+    private readonly logger = new Logger(OrderService.name);
+
     constructor(
         private readonly prismaService: PrismaService,
         private readonly deliveryService: DeliveryService,
         private readonly notificationService: NotificationService,
         private readonly chatService: ChatService,
         private readonly currencyService: CurrencyConversionService,
+        private readonly paymentService: PaymentService,
+        @Inject(forwardRef(() => StripeService))
+        private readonly stripeService: StripeService,
+        private readonly smtpProvider: SMTPProvider,
     ) {}
-
-    async createOrder(userId: number, dto: CreateOrderDto) {
-        if (!dto.items || dto.items.length === 0) {
-            throw new BadRequestException("Order must contain at least one item");
-        }
-        await assertEntityExists(this.prismaService.baseUser, "User", userId);
-
-        // Fetch all product IDs from DB to verify and get prices
-        const productIds = dto.items.map((i) => i.productId);
-        const products = await this.prismaService.product.findMany({
-            where: { id: { in: productIds } },
-        });
-
-        const productMap = new Map(products.map((p) => [p.id, p]));
-
-        // Calculate totals and verify product existence
-        let total = 0;
-        const itemsToCreate: { productId: number; price: number }[] = [];
-
-        for (const itemDto of dto.items) {
-            const product = productMap.get(itemDto.productId);
-            if (!product) {
-                throw new NotFoundException(`Product with ID ${itemDto.productId} not found`);
-            }
-            if (product.status !== ProductStatus.ACTIVE) {
-                throw new BadRequestException(`Product ${product.name} is currently unavailable`);
-            }
-            if (product.authentication_status !== AuthenticationStatus.VERIFIED) {
-                throw new BadRequestException(`Product ${product.name} has not been authenticated yet`);
-            }
-
-            const activePrice = product.discounted_price ?? product.original_price;
-            total += activePrice;
-
-            itemsToCreate.push({
-                productId: itemDto.productId,
-                price: activePrice,
-            });
-        }
-
-        // Create the order inside a database transaction, atomically claiming each
-        // product so two concurrent buyers can never both check out the same unique item.
-        return this.prismaService.$transaction(async (tx) => {
-            const order = await tx.order.create({
-                data: {
-                    userId,
-                    sellerId: products[0].userId, // Fallback sellerId for old createOrder endpoint
-                    status: OrderStatus.PENDING,
-                    total,
-                    shippingAddress: dto.shippingAddress,
-                    city: dto.city,
-                    postalCode: dto.postalCode,
-                    country: dto.country,
-                    items: {
-                        create: itemsToCreate,
-                    },
-                },
-                include: {
-                    items: true,
-                    user: {
-                        select: {
-                            id: true,
-                            email: true,
-                            profile: { select: { full_name: true, avatar_url: true, phone: true } },
-                        },
-                    },
-                },
-            });
-
-            return order;
-        });
-    }
 
     async getCheckoutSummary(
         userId: number,
@@ -133,89 +97,6 @@ export class OrderService {
         };
     }
 
-    async checkoutFromCart(userId: number, dto: CheckoutDto) {
-        if (dto.acceptedTerms === false) {
-            throw new BadRequestException("You must agree to the Terms & Conditions and Privacy Policy before checkout.");
-        }
-
-        const checkoutAddress = await this.resolveCheckoutAddress(userId, dto);
-        const summary = await this.buildCheckoutSummary(userId, {
-            sellerIds: dto.sellerIds,
-            cartItemIds: dto.cartItemIds,
-            addressId: dto.addressId,
-            country: checkoutAddress.country ?? undefined,
-            couponCode: dto.couponCode,
-        });
-
-        const createdOrders: any[] = [];
-
-        await this.prismaService.$transaction(async (tx) => {
-            for (const group of summary.seller_groups) {
-                const order = await tx.order.create({
-                    data: {
-                        userId,
-                        sellerId: group.seller.id,
-                        status: OrderStatus.PENDING,
-                        total: group.total,
-                        delivery_partner: group.delivery.partner,
-                        delivery_cost: group.delivery.cost,
-                        delivery_days_min: group.delivery.days_min,
-                        delivery_days_max: group.delivery.days_max,
-                        shippingAddress: checkoutAddress.shippingAddress,
-                        city: checkoutAddress.city,
-                        postalCode: checkoutAddress.postalCode,
-                        country: checkoutAddress.country,
-                        items: {
-                            create: group.items.map((item) => ({
-                                productId: item.productId,
-                                price: item.price,
-                            })),
-                        },
-                    },
-                    include: {
-                        items: true,
-                    },
-                });
-
-                createdOrders.push(order);
-            }
-
-            if (summary.coupon) {
-                await tx.coupon.update({
-                    where: { id: summary.coupon.id },
-                    data: { used_count: { increment: 1 } },
-                });
-            }
-
-            const checkedOutCartItemIds = summary.seller_groups.flatMap((group) => group.items.map((item) => item.id));
-            await tx.cartItem.deleteMany({
-                where: { cartId: summary.cart_id, id: { in: checkedOutCartItemIds } },
-            });
-        });
-
-        // Send notifications
-        for (const order of createdOrders) {
-            try {
-                await this.notificationService.create(
-                    order.userId,
-                    "Order Placed",
-                    `Your order #${order.id} has been placed successfully.`,
-                    NotificationType.ORDER,
-                );
-                await this.notificationService.create(
-                    order.sellerId,
-                    "New Order Received",
-                    `You have received a new order #${order.id}.`,
-                    NotificationType.ORDER,
-                );
-            } catch (e) {
-                console.error("Failed to send order notification", e);
-            }
-        }
-
-        return { orders: createdOrders };
-    }
-
     async getBuyNowCheckoutSummary(userId: number, dto: BuyNowCheckoutSummaryDto) {
         const summary = await this.buildBuyNowCheckoutSummary(userId, dto);
         return this.applyCheckoutSummaryCurrency(summary, await this.getUserCurrency(userId));
@@ -223,110 +104,6 @@ export class OrderService {
 
     async getBuyNowCheckoutSummaryForPayment(userId: number, dto: BuyNowCheckoutSummaryDto) {
         return this.buildBuyNowCheckoutSummary(userId, dto);
-    }
-
-    async checkoutBuyNow(
-        userId: number,
-        dto: Omit<CreateBuyNowCheckoutSessionDto, "successUrl" | "cancelUrl"> & { stripeCheckoutSessionId?: string },
-    ) {
-        if (dto.acceptedTerms === false) {
-            throw new BadRequestException("You must agree to the Terms & Conditions and Privacy Policy before checkout.");
-        }
-
-        if (dto.stripeCheckoutSessionId) {
-            const existingOrder = await this.prismaService.order.findUnique({
-                where: { stripe_checkout_session_id: dto.stripeCheckoutSessionId },
-                include: { items: true },
-            });
-
-            if (existingOrder) {
-                return { orders: [existingOrder], already_processed: true };
-            }
-        }
-
-        const checkoutAddress = await this.resolveCheckoutAddress(userId, dto);
-        const summary = await this.buildBuyNowCheckoutSummary(userId, {
-            productId: dto.productId,
-            addressId: dto.addressId,
-            shippingAddress: checkoutAddress.shippingAddress ?? undefined,
-            city: checkoutAddress.city ?? undefined,
-            postalCode: checkoutAddress.postalCode ?? undefined,
-            country: checkoutAddress.country ?? undefined,
-        });
-        const group = summary.seller_groups[0];
-        const item = group.items[0];
-        if (!group.delivery || group.total === null || group.delivery_cost === null) {
-            throw new BadRequestException("Select a shipping address before checkout.");
-        }
-        const delivery = group.delivery;
-        const total = group.total;
-        const deliveryCost = group.delivery_cost;
-
-        let order: any;
-        try {
-            order = await this.prismaService.$transaction(async (tx) => {
-                const createdOrder = await tx.order.create({
-                    data: {
-                        userId,
-                        sellerId: group.seller.id,
-                        status: OrderStatus.PENDING,
-                        total,
-                        delivery_partner: delivery.partner,
-                        delivery_cost: deliveryCost,
-                        delivery_days_min: delivery.days_min,
-                        delivery_days_max: delivery.days_max,
-                        shippingAddress: checkoutAddress.shippingAddress,
-                        city: checkoutAddress.city,
-                        postalCode: checkoutAddress.postalCode,
-                        country: checkoutAddress.country,
-                        stripe_checkout_session_id: dto.stripeCheckoutSessionId,
-                        items: {
-                            create: {
-                                productId: item.productId,
-                                price: item.price,
-                            },
-                        },
-                    },
-                    include: {
-                        items: true,
-                    },
-                });
-
-                return createdOrder;
-            });
-        } catch (err) {
-            if (dto.stripeCheckoutSessionId && (err as any)?.code === "P2002") {
-                const existingOrder = await this.prismaService.order.findUnique({
-                    where: { stripe_checkout_session_id: dto.stripeCheckoutSessionId },
-                    include: { items: true },
-                });
-
-                if (existingOrder) {
-                    return { orders: [existingOrder], already_processed: true };
-                }
-            }
-
-            throw err;
-        }
-
-        try {
-            await this.notificationService.create(
-                order.userId,
-                "Order Placed",
-                `Your order #${order.id} has been placed successfully.`,
-                NotificationType.ORDER,
-            );
-            await this.notificationService.create(
-                order.sellerId,
-                "New Order Received",
-                `You have received a new order #${order.id}.`,
-                NotificationType.ORDER,
-            );
-        } catch (e) {
-            console.error("Failed to send order notification", e);
-        }
-
-        return { orders: [order] };
     }
 
     async findAllUserOrders(userId: number, query: OrderQueryDto) {
@@ -383,12 +160,7 @@ export class OrderService {
         const { page = 1, limit = 10, status, sellerTab } = query;
         const skip = (page - 1) * limit;
 
-        const whereClause: any = { sellerId };
-        if (status) {
-            whereClause.status = status;
-        } else if (sellerTab) {
-            whereClause.status = { in: this.getStatusesForSellerTab(sellerTab) };
-        }
+        const whereClause: any = { sellerId, status: this.getSellerStatusFilter(status, sellerTab) };
 
         const [data, total] = await Promise.all([
             this.prismaService.order.findMany({
@@ -449,12 +221,8 @@ export class OrderService {
         const whereClause: any = {
             sellerId,
             items: { some: { productId } },
+            status: this.getSellerStatusFilter(status, sellerTab),
         };
-        if (status) {
-            whereClause.status = status;
-        } else if (sellerTab) {
-            whereClause.status = { in: this.getStatusesForSellerTab(sellerTab) };
-        }
 
         const [data, total] = await Promise.all([
             this.prismaService.order.findMany({
@@ -509,6 +277,10 @@ export class OrderService {
             throw new ForbiddenException("You do not have permission to access this order");
         }
 
+        if (order.userId !== userId && !isAdmin && order.status === OrderStatus.PENDING) {
+            throw new NotFoundException(`Order with ID ${orderId} not found`);
+        }
+
         const currency = userId ? await this.getUserCurrency(userId) : CurrencyPreference.USD;
         return this.formatOrderDetail(order, currency);
     }
@@ -525,6 +297,10 @@ export class OrderService {
 
         if (order.sellerId !== sellerId) {
             throw new ForbiddenException("You do not have permission to access this order");
+        }
+
+        if (order.status === OrderStatus.PENDING) {
+            throw new NotFoundException(`Order with ID ${orderId} not found`);
         }
 
         return this.formatSellerOrderDetail(order, await this.getUserCurrency(sellerId));
@@ -544,39 +320,38 @@ export class OrderService {
     }
 
     async cancelOrder(orderId: number, userId: number, reason?: string) {
-        const order = await this.findOrderById(orderId, userId);
-
-        if (order.status !== OrderStatus.PENDING && order.status !== OrderStatus.CONFIRMED) {
-            throw new BadRequestException(`Order cannot be cancelled in its current status: ${order.status}`);
-        }
-
-        const updated = await this.prismaService.$transaction(async (tx) => {
-            const cancelled = await tx.order.update({
-                where: { id: orderId },
-                data: {
-                    status: OrderStatus.CANCELLED,
-                    cancelled_at: new Date(),
-                    cancelled_by_user_id: userId,
-                    cancelled_by_actor: OrderCancellationActor.BUYER,
-                    cancellation_reason: reason,
-                },
-                include: this.getOrderDetailInclude(),
-            });
-
-            await this.restoreProductsAfterCancellation(tx, cancelled.items.map((item) => item.productId));
-
-            return cancelled;
+        const order = await this.prismaService.order.findUnique({
+            where: { id: orderId },
+            select: { userId: true },
         });
 
-        try {
-            await this.notificationService.create(
-                updated.sellerId,
-                "Order Cancelled",
-                `Order #${updated.id} has been cancelled by the buyer.`,
-                NotificationType.ORDER,
-            );
-        } catch (e) {
-            console.error("Failed to send cancellation notification", e);
+        if (!order) {
+            throw new NotFoundException(`Order with ID ${orderId} not found`);
+        }
+
+        if (order.userId !== userId) {
+            throw new ForbiddenException("You do not have permission to cancel this order");
+        }
+
+        const updated = await this.cancelOrderWithRefund(orderId, {
+            actor: OrderCancellationActor.BUYER,
+            actorId: userId,
+            reason,
+            fromStatuses: [OrderStatus.PENDING, OrderStatus.CONFIRMED],
+        });
+
+        // An unpaid checkout was never shown to the seller, so there is nothing to tell them
+        if (updated.confirmed_at) {
+            try {
+                await this.notificationService.create(
+                    updated.sellerId,
+                    "Order Cancelled",
+                    `Order #${updated.id} has been cancelled by the buyer.`,
+                    NotificationType.ORDER,
+                );
+            } catch (e) {
+                this.logger.error("Failed to send cancellation notification", e);
+            }
         }
 
         return this.formatOrderDetail(updated, await this.getUserCurrency(userId));
@@ -659,8 +434,9 @@ export class OrderService {
             throw new NotFoundException(`Order with ID ${orderId} not found for this seller`);
         }
 
+        // Only a successful payment can confirm an order, so PENDING has no seller transitions
         const validTransitions: Record<OrderStatus, OrderStatus[]> = {
-            [OrderStatus.PENDING]: [OrderStatus.CONFIRMED, OrderStatus.CANCELLED],
+            [OrderStatus.PENDING]: [],
             [OrderStatus.CONFIRMED]: [OrderStatus.PROCESSING, OrderStatus.SHIPPED, OrderStatus.CANCELLED],
             [OrderStatus.PROCESSING]: [OrderStatus.SHIPPED],
             [OrderStatus.SHIPPED]: [OrderStatus.DELIVERED],
@@ -676,29 +452,14 @@ export class OrderService {
             );
         }
 
-        const updated = await this.prismaService.$transaction(async (tx) => {
-            const result = await tx.order.update({
-                where: { id: orderId },
-                data: {
-                    status,
-                    ...this.getOrderTimelineUpdate(status),
-                    ...(status === OrderStatus.CANCELLED
-                        ? {
-                              cancelled_at: new Date(),
-                              cancelled_by_user_id: sellerId,
-                              cancelled_by_actor: OrderCancellationActor.SELLER,
-                          }
-                        : {}),
-                },
-                include: this.getOrderDetailInclude(),
-            });
-
-            if (status === OrderStatus.CANCELLED) {
-                await this.restoreProductsAfterCancellation(tx, result.items.map((item) => item.productId));
-            }
-
-            return result;
-        });
+        const updated =
+            status === OrderStatus.CANCELLED
+                ? await this.cancelOrderWithRefund(orderId, {
+                      actor: OrderCancellationActor.SELLER,
+                      actorId: sellerId,
+                      fromStatuses: [order.status],
+                  })
+                : await this.advanceOrderStatus(orderId, order.status, status);
 
         // Notify buyer
         try {
@@ -709,19 +470,27 @@ export class OrderService {
                 NotificationType.ORDER,
             );
         } catch (e) {
-            console.error("Failed to send status update notification", e);
+            this.logger.error("Failed to send status update notification", e);
         }
 
         return this.formatSellerOrderDetail(updated, await this.getUserCurrency(sellerId));
     }
 
     async findAllOrdersAdmin(query: OrderQueryDto) {
-        const { page = 1, limit = 10, status } = query;
+        const { page = 1, limit = 10, status, search } = query;
         const skip = (page - 1) * limit;
 
         const whereClause: any = {};
         if (status) {
             whereClause.status = status;
+        }
+        if (search?.trim()) {
+            const orderId = Number(search.trim().replace(/^KDF0*/i, ""));
+            whereClause.OR = [
+                ...(Number.isInteger(orderId) && orderId > 0 && orderId < 2_147_483_647 ? [{ id: orderId }] : []),
+                { user: { email: { contains: search.trim(), mode: "insensitive" } } },
+                { seller: { email: { contains: search.trim(), mode: "insensitive" } } },
+            ];
         }
 
         const [data, total] = await Promise.all([
@@ -729,9 +498,7 @@ export class OrderService {
                 where: whereClause,
                 skip,
                 take: limit,
-                include: {
-                    items: true,
-                },
+                include: this.getOrderDetailInclude(),
                 orderBy: {
                     createdAt: "desc",
                 },
@@ -740,7 +507,7 @@ export class OrderService {
         ]);
 
         return {
-            data,
+            data: await Promise.all(data.map((order) => this.formatAdminOrder(order))),
             meta: {
                 total,
                 page,
@@ -750,34 +517,42 @@ export class OrderService {
         };
     }
 
+    async findOrderByIdAdmin(orderId: number) {
+        const order = await this.prismaService.order.findUnique({
+            where: { id: orderId },
+            include: this.getOrderDetailInclude(),
+        });
+
+        if (!order) {
+            throw new NotFoundException(`Order with ID ${orderId} not found`);
+        }
+
+        return {
+            ...(await this.formatOrderDetail(order, CurrencyPreference.USD)),
+            ...(await this.formatAdminOrder(order)),
+            cancellation: this.getCancellationSummary(order),
+            next_statuses: ADMIN_STATUS_TRANSITIONS[order.status],
+        };
+    }
+
     async updateOrderStatusAdmin(orderId: number, status: OrderStatus) {
         const order = await this.prismaService.order.findUnique({ where: { id: orderId } });
         if (!order) {
             throw new NotFoundException(`Order with ID ${orderId} not found`);
         }
 
-        const updated = await this.prismaService.$transaction(async (tx) => {
-            const result = await tx.order.update({
-                where: { id: orderId },
-                data: {
-                    status,
-                    ...this.getOrderTimelineUpdate(status),
-                    ...(status === OrderStatus.CANCELLED
-                        ? {
-                              cancelled_at: new Date(),
-                              cancelled_by_actor: OrderCancellationActor.ADMIN,
-                          }
-                        : {}),
-                },
-                include: this.getOrderDetailInclude(),
-            });
+        if (!ADMIN_STATUS_TRANSITIONS[order.status].includes(status)) {
+            throw new BadRequestException(`Invalid status transition from ${order.status} to ${status}.`);
+        }
 
-            if (status === OrderStatus.CANCELLED) {
-                await this.restoreProductsAfterCancellation(tx, result.items.map((item) => item.productId));
-            }
-
-            return result;
-        });
+        const updated =
+            status === OrderStatus.CANCELLED || status === OrderStatus.REFUNDED
+                ? await this.cancelOrderWithRefund(orderId, {
+                      actor: OrderCancellationActor.ADMIN,
+                      fromStatuses: [order.status],
+                      toStatus: status,
+                  })
+                : await this.advanceOrderStatus(orderId, order.status, status);
 
         // Notify buyer and seller
         try {
@@ -794,7 +569,7 @@ export class OrderService {
                 NotificationType.ORDER,
             );
         } catch (e) {
-            console.error("Failed to send status update notification", e);
+            this.logger.error("Failed to send status update notification", e);
         }
 
         return updated;
@@ -815,6 +590,7 @@ export class OrderService {
         const user = await this.prismaService.baseUser.findUnique({
             where: { id: userId },
             include: {
+                profile: { select: { country: true } },
                 addresses: { orderBy: [{ is_default: "desc" }, { createdAt: "desc" }] },
             },
         });
@@ -823,7 +599,7 @@ export class OrderService {
             throw new NotFoundException("User not found");
         }
 
-        // const checkoutAddress = await this.resolveCheckoutAddress(userId, dto);
+        const { selectedAddress, buyerCountry } = this.resolveBuyerDestination(user, dto);
         const product = await this.prismaService.product.findUnique({
             where: { id: dto.productId },
             include: {
@@ -859,11 +635,12 @@ export class OrderService {
             throw new BadRequestException("You cannot buy your own product.");
         }
 
+        this.assertNotReservedByOtherBuyer(product, userId);
+
         const sellerCountry = product.user.profile?.country ?? null;
         const delivery = this.deliveryService.resolveDelivery(
             product.user.delivery_option,
-            // checkoutAddress?.country ?? null,
-            null,
+            buyerCountry,
             sellerCountry,
         );
         const unitPrice = this.roundMoney(product.discounted_price ?? product.original_price);
@@ -918,7 +695,7 @@ export class OrderService {
                 },
             ],
             addresses: user.addresses,
-            // selected_address: checkoutAddress,
+            selected_address: selectedAddress,
             requires_address_selection: false,
             coupon: coupon
                 ? {
@@ -960,15 +737,7 @@ export class OrderService {
             throw new NotFoundException("User not found");
         }
 
-        const selectedAddress = dto.addressId
-            ? user.addresses.find((address) => address.id === dto.addressId)
-            : user.addresses.find((address) => address.is_default) ?? user.addresses[0] ?? null;
-
-        if (dto.addressId && !selectedAddress) {
-            throw new NotFoundException("Address not found");
-        }
-
-        const buyerCountry = selectedAddress?.country ?? dto.country ?? user.profile?.country ?? null;
+        const { selectedAddress, buyerCountry } = this.resolveBuyerDestination(user, dto);
 
         const cart = await this.prismaService.cart.findUnique({
             where: { userId },
@@ -1034,6 +803,7 @@ export class OrderService {
             if (!item.product.user.stripe_onboarding_complete) {
                 throw new ForbiddenException(`Seller of product ${item.product.name} has not completed payment setup.`);
             }
+            this.assertNotReservedByOtherBuyer(item.product, userId);
         }
 
         const coupon = dto.couponCode
@@ -1148,6 +918,45 @@ export class OrderService {
                 next_action: "create_checkout_session",
             },
         };
+    }
+
+    /**
+     * An explicitly chosen address or typed-in country decides the delivery zone. The default
+     * address and profile country are only a best guess for previews before the buyer chooses.
+     */
+    private resolveBuyerDestination(
+        user: { addresses: any[]; profile?: { country: string | null } | null },
+        dto: { addressId?: number; country?: string },
+    ) {
+        const fallbackAddress = user.addresses.find((address) => address.is_default) ?? user.addresses[0] ?? null;
+        const selectedAddress = dto.addressId
+            ? user.addresses.find((address) => address.id === dto.addressId)
+            : fallbackAddress;
+
+        if (dto.addressId && !selectedAddress) {
+            throw new NotFoundException("Address not found");
+        }
+
+        const buyerCountry = dto.addressId
+            ? selectedAddress.country
+            : dto.country ?? selectedAddress?.country ?? user.profile?.country ?? null;
+
+        return { selectedAddress, buyerCountry };
+    }
+
+    private assertNotReservedByOtherBuyer(
+        product: { name: string; reserved_until: Date | null; reserved_by_user_id: number | null },
+        userId: number,
+    ) {
+        if (product.reserved_until && product.reserved_until > new Date() && product.reserved_by_user_id !== userId) {
+            throw new ConflictException(`${product.name} is currently being purchased by another buyer. Please try again shortly.`);
+        }
+    }
+
+    private assertSellerDeliversToBuyer(delivery: { partner: string | null }) {
+        if (!delivery.partner) {
+            throw new BadRequestException("This seller does not deliver to the selected address.");
+        }
     }
 
     private async validateCouponForCart(couponCode: string, cartItems: any[]) {
@@ -1339,8 +1148,9 @@ export class OrderService {
     /**
      * Create pending orders for cart checkout (before Stripe session is created).
      * Does NOT delete cart items — those are deleted only on webhook payment success.
+     * Each item is held for the buyer for reservationMinutes, so it cannot be sold twice.
      */
-    async createPendingCartOrders(userId: number, dto: CheckoutDto) {
+    async createPendingCartOrders(userId: number, dto: CheckoutDto, reservationMinutes: number) {
         const checkoutAddress = await this.resolveCheckoutAddress(userId, dto);
         const summary = await this.buildCheckoutSummary(userId, {
             sellerIds: dto.sellerIds,
@@ -1350,9 +1160,16 @@ export class OrderService {
             couponCode: dto.couponCode,
         });
 
+        summary.seller_groups.forEach((group) => this.assertSellerDeliversToBuyer(group.delivery));
+
+        const productIds = summary.seller_groups.flatMap((group) => group.items.map((item) => item.productId));
+        await this.replaceOpenCheckouts(userId, productIds);
+
         const createdOrders: any[] = [];
 
         await this.prismaService.$transaction(async (tx) => {
+            await this.reserveProducts(tx, productIds, userId, reservationMinutes);
+
             for (const group of summary.seller_groups) {
                 const order = await tx.order.create({
                     data: {
@@ -1395,6 +1212,7 @@ export class OrderService {
     async createPendingBuyNowOrder(
         userId: number,
         dto: Omit<CreateBuyNowCheckoutSessionDto, "successUrl" | "cancelUrl">,
+        reservationMinutes: number,
     ) {
         const checkoutAddress = await this.resolveCheckoutAddress(userId, dto);
         const summary = await this.buildBuyNowCheckoutSummary(userId, {
@@ -1414,7 +1232,12 @@ export class OrderService {
             throw new BadRequestException("Select a shipping address before checkout.");
         }
 
+        this.assertSellerDeliversToBuyer(group.delivery);
+        await this.replaceOpenCheckouts(userId, [item.productId]);
+
         const order = await this.prismaService.$transaction(async (tx) => {
+            await this.reserveProducts(tx, [item.productId], userId, reservationMinutes);
+
             const createdOrder = await tx.order.create({
                 data: {
                     userId,
@@ -1445,79 +1268,264 @@ export class OrderService {
     }
 
     /**
-     * Confirm a pending order (transition from PENDING to CONFIRMED).
-     * Called by the Stripe webhook after payment is verified.
-     * Only sets stripe_checkout_session_id for buy-now orders (where there's 1:1 mapping).
-     * For cart orders, session ID is in the payment transaction.
+     * Applies a successful payment. Safe to call repeatedly for the same payment: orders that were
+     * already settled are reported, not changed, so a redelivered webhook cannot rewind an order
+     * that has since shipped. Orders that can no longer be fulfilled come back in `rejected`,
+     * and the caller is responsible for returning that money.
      */
-    async confirmOrder(orderId: number, stripeCheckoutSessionId?: string, isBuyNow = false) {
-        const existing = await this.prismaService.order.findUnique({
-            where: { id: orderId },
-            select: { id: true, status: true },
-        });
-
-        if (existing?.status === OrderStatus.CONFIRMED) {
-            return existing;
-        }
-
-        const timelineUpdate = this.getOrderTimelineUpdate(OrderStatus.CONFIRMED);
-
-        // Only set stripe_checkout_session_id for buy-now orders to avoid unique constraint violation
-        const updateData: any = {
-            status: OrderStatus.CONFIRMED,
-            ...timelineUpdate,
-        };
-
-        if (isBuyNow && stripeCheckoutSessionId) {
-            updateData.stripe_checkout_session_id = stripeCheckoutSessionId;
-        }
-
-        const confirmed = await this.prismaService.order.update({
-            where: { id: orderId },
-            data: updateData,
-            include: { items: true },
-        });
-
-        return confirmed;
-    }
-
     async finalizePaidOrders(params: {
         orderIds: number[];
         cartId?: number;
         cartItemIds?: number[];
         couponId?: number;
+        stripeCheckoutSessionId?: string;
+        paymentTransactionId?: number;
     }) {
         const orderIds = [...new Set(params.orderIds.filter((id) => Number.isInteger(id) && id > 0))];
         if (!orderIds.length) {
             throw new BadRequestException("No orders were provided for payment finalization.");
         }
 
-        const confirmedOrders: any[] = [];
-        for (const orderId of orderIds) {
-            confirmedOrders.push(await this.confirmOrder(orderId, undefined, false));
-        }
-
-        if (params.cartId) {
-            await this.prismaService.cartItem.deleteMany({
-                where: {
-                    cartId: params.cartId,
-                    ...(params.cartItemIds?.length ? { id: { in: params.cartItemIds } } : {}),
-                },
-            });
-        }
-
-        if (params.couponId) {
-            await this.prismaService.coupon.update({
-                where: { id: params.couponId },
-                data: { used_count: { increment: 1 } },
-            });
-        }
+        const confirmed: any[] = [];
+        const alreadySettled: number[] = [];
+        const rejected: number[] = [];
 
         for (const orderId of orderIds) {
-            await this.markProductsSoldForOrder(orderId);
+            const outcome = await this.settleOrder(orderId, params.stripeCheckoutSessionId);
+            if (outcome.result === "confirmed") {
+                confirmed.push(outcome.order);
+            } else if (outcome.result === "already_settled") {
+                alreadySettled.push(orderId);
+            } else {
+                rejected.push(orderId);
+            }
         }
 
-        return confirmedOrders;
+        if (rejected.length) {
+            await this.cancelPendingPaymentOrders(rejected, "The item was no longer available when payment completed.");
+        }
+
+        if (confirmed.length) {
+            if (params.cartId) {
+                await this.prismaService.cartItem.deleteMany({
+                    where: {
+                        cartId: params.cartId,
+                        productId: { in: confirmed.flatMap((order) => order.items.map((item: any) => item.productId)) },
+                    },
+                });
+            }
+
+            if (params.couponId) {
+                await this.prismaService.coupon.update({
+                    where: { id: params.couponId },
+                    data: { used_count: { increment: 1 } },
+                });
+            }
+
+            const transaction = params.paymentTransactionId
+                ? await this.paymentService.findById(params.paymentTransactionId)
+                : null;
+
+            await Promise.all(confirmed.map((order) => this.notifyOrderPaid(order, transaction)));
+        }
+
+        return {
+            confirmed: confirmed.map((order) => order.id as number),
+            alreadySettled,
+            rejected,
+        };
+    }
+
+    private async settleOrder(orderId: number, stripeCheckoutSessionId?: string) {
+        const order = await this.prismaService.order.findUnique({
+            where: { id: orderId },
+            include: { items: true, seller: { select: { seller_tier: true } } },
+        });
+
+        if (!order) {
+            return { result: "rejected" as const };
+        }
+        if (order.status !== OrderStatus.PENDING) {
+            const wasCancelled = order.status === OrderStatus.CANCELLED;
+            return { result: wasCancelled ? ("rejected" as const) : ("already_settled" as const) };
+        }
+
+        const now = new Date();
+        const productIds = [...new Set(order.items.map((item) => item.productId))];
+        const platformFeePercent = getSellerFeePercent(order.seller.seller_tier);
+
+        try {
+            const confirmedOrder = await this.prismaService.$transaction(async (tx) => {
+                for (const productId of productIds) {
+                    const sold = await tx.product.updateMany({
+                        where: {
+                            id: productId,
+                            status: ProductStatus.ACTIVE,
+                            authentication_status: AuthenticationStatus.VERIFIED,
+                            OR: [
+                                { reserved_until: null },
+                                { reserved_until: { lt: now } },
+                                { reserved_by_user_id: order.userId },
+                            ],
+                        },
+                        data: { status: ProductStatus.SOLD, sold_at: now, reserved_until: null, reserved_by_user_id: null },
+                    });
+
+                    if (sold.count === 0) {
+                        throw new ConflictException(`Product ${productId} is no longer available.`);
+                    }
+                }
+
+                const claimed = await tx.order.updateMany({
+                    where: { id: orderId, status: OrderStatus.PENDING },
+                    data: {
+                        status: OrderStatus.CONFIRMED,
+                        confirmed_at: now,
+                        platform_fee_percent: platformFeePercent,
+                        seller_net_amount: this.roundMoney(order.total * (1 - platformFeePercent / 100)),
+                        ...(stripeCheckoutSessionId ? { stripe_checkout_session_id: stripeCheckoutSessionId } : {}),
+                    },
+                });
+
+                if (claimed.count === 0) {
+                    throw new ConflictException(`Order ${orderId} was settled concurrently.`);
+                }
+
+                return { ...order, status: OrderStatus.CONFIRMED };
+            });
+
+            return { result: "confirmed" as const, order: confirmedOrder };
+        } catch (error) {
+            if (!(error instanceof ConflictException)) {
+                throw error;
+            }
+
+            // Lost a race with a redelivery of this same payment: that is success, not a conflict
+            const current = await this.prismaService.order.findUnique({
+                where: { id: orderId },
+                select: { status: true },
+            });
+            if (current && current.status !== OrderStatus.PENDING && current.status !== OrderStatus.CANCELLED) {
+                return { result: "already_settled" as const };
+            }
+
+            this.logger.error(`Paid order ${orderId} could not be fulfilled: ${error.message}`);
+            return { result: "rejected" as const };
+        }
+    }
+
+    private async notifyOrderPaid(order: { id: number; userId: number; sellerId: number }, transaction: any) {
+        try {
+            await this.notificationService.create(
+                order.userId,
+                "Order Placed",
+                `Your order #${order.id} has been placed successfully.`,
+                NotificationType.ORDER,
+            );
+            await this.notificationService.create(
+                order.sellerId,
+                "New Order Received",
+                `You have received a new order #${order.id}.`,
+                NotificationType.ORDER,
+            );
+            await this.sendOrderPaidEmails(order.id, transaction);
+        } catch (e) {
+            this.logger.error("Failed to send order notification", e);
+        }
+    }
+
+    private async sendOrderPaidEmails(orderId: number, transaction: any) {
+        const order = await this.prismaService.order.findUniqueOrThrow({
+            where: { id: orderId },
+            include: this.getOrderDetailInclude(),
+        });
+
+        const shared = {
+            orderReference: this.getDisplayOrderId(order.id),
+            itemNames: order.items.map((item) => item.product.name),
+            amount: this.formatChargedAmount(order, transaction),
+            deliveryAddress: [order.shippingAddress, order.city, order.postalCode, order.country].filter(Boolean).join(", "),
+        };
+        const buyerName = order.user.profile?.full_name ?? order.user.email;
+        const sellerName = order.seller.profile?.full_name ?? order.seller.email;
+
+        await this.smtpProvider.sendMail(
+            order.user.email,
+            `Your BestKid order ${shared.orderReference} is confirmed`,
+            orderConfirmationEmail({ ...shared, name: buyerName, otherPartyName: sellerName }),
+        );
+        await this.smtpProvider.sendMail(
+            order.seller.email,
+            `You sold an item: order ${shared.orderReference}`,
+            newSaleEmail({ ...shared, name: sellerName, otherPartyName: buyerName }),
+        );
+    }
+
+    // The order total is stored in USD, but the buyer is told what their card was really charged
+    private formatChargedAmount(order: { id: number; total: number }, transaction: any) {
+        const metadata = transaction?.metadata ?? {};
+        const plan = Array.isArray(metadata.cartSplitPlan)
+            ? metadata.cartSplitPlan.find((entry: any) => Number(entry.orderId) === order.id)
+            : undefined;
+
+        if (plan?.orderTotal !== undefined) {
+            return this.formatMoney(Number(plan.orderTotal), plan.currency);
+        }
+        if (transaction && metadata.checkoutMode === "buy_now") {
+            return this.formatMoney(transaction.amount, transaction.currency);
+        }
+        return this.formatMoney(order.total, "usd");
+    }
+
+    private formatMoney(amount: number, currency: string) {
+        return `${amount.toFixed(2)} ${currency.toUpperCase()}`;
+    }
+
+    /**
+     * Tells a buyer their money went straight back because the order could not be fulfilled, for
+     * example when a payment landed on an order that had already been cancelled.
+     */
+    async notifyPaymentReturned(orderId: number, refund: { refund_amount?: number; currency?: string }) {
+        const order = await this.prismaService.order.findUniqueOrThrow({
+            where: { id: orderId },
+            include: this.getOrderDetailInclude(),
+        });
+
+        try {
+            await this.notificationService.create(
+                order.userId,
+                "Order Cancelled",
+                `Order #${order.id} could not be completed and your payment has been refunded.`,
+                NotificationType.ORDER,
+            );
+        } catch (e) {
+            this.logger.error("Failed to send refund notification", e);
+        }
+
+        await this.sendOrderCancelledEmail(order, this.getRefundNote(refund));
+    }
+
+    private getRefundNote(refund?: { refund_amount?: number; currency?: string }) {
+        return refund?.refund_amount !== undefined && refund.currency
+            ? `A refund of ${this.formatMoney(refund.refund_amount, refund.currency)} has been issued to your original payment method. Your bank may take a few days to show it.`
+            : "If you were charged, your refund will be handled by our support team.";
+    }
+
+    private async sendOrderCancelledEmail(order: any, refundNote: string) {
+        try {
+            await this.smtpProvider.sendMail(
+                order.user.email,
+                `Your BestKid order ${this.getDisplayOrderId(order.id)} was cancelled`,
+                orderCancelledEmail({
+                    name: order.user.profile?.full_name ?? order.user.email,
+                    orderReference: this.getDisplayOrderId(order.id),
+                    itemNames: order.items.map((item: any) => item.product.name),
+                    refundNote,
+                }),
+            );
+        } catch (e) {
+            this.logger.error("Failed to send cancellation email", e);
+        }
     }
 
     async cancelPendingPaymentOrders(orderIds: number[], reason: string) {
@@ -1526,11 +1534,13 @@ export class OrderService {
             return { count: 0 };
         }
 
-        return this.prismaService.order.updateMany({
-            where: {
-                id: { in: normalizedOrderIds },
-                status: OrderStatus.PENDING,
-            },
+        const orders = await this.prismaService.order.findMany({
+            where: { id: { in: normalizedOrderIds }, status: OrderStatus.PENDING },
+            include: { items: { select: { productId: true } } },
+        });
+
+        const result = await this.prismaService.order.updateMany({
+            where: { id: { in: orders.map((order) => order.id) }, status: OrderStatus.PENDING },
             data: {
                 status: OrderStatus.CANCELLED,
                 cancelled_at: new Date(),
@@ -1538,75 +1548,190 @@ export class OrderService {
                 cancellation_reason: reason,
             },
         });
+
+        for (const order of orders) {
+            await this.releaseReservations(this.prismaService, order.items.map((item) => item.productId), order.userId);
+        }
+
+        return result;
     }
 
     /**
-     * Atomically flips a single-unit product from ACTIVE to SOLD. The WHERE guard makes this
-     * safe under concurrency — if two buyers race to check out the same item, only the first
-     * `updateMany` inside this transaction affects a row; the loser sees count 0 and is rejected
-     * instead of both orders succeeding.
+     * Takes an order out of fulfilment and returns the buyer's money. The status is claimed first,
+     * so a seller shipping at the same moment cannot race the refund, and put back if the refund
+     * fails, so an order is never marked refunded while the money is still held.
      */
-    async markProductsSoldForOrder(orderId: number) {
+    private async cancelOrderWithRefund(orderId: number, params: CancellationParams) {
+        const toStatus = params.toStatus ?? OrderStatus.CANCELLED;
         const order = await this.prismaService.order.findUnique({
             where: { id: orderId },
-            include: { items: true },
+            include: { items: { select: { productId: true } } },
         });
 
         if (!order) {
             throw new NotFoundException(`Order with ID ${orderId} not found`);
         }
-
-        if (order.status === OrderStatus.CONFIRMED) {
-            const productIds = [...new Set(order.items.map((item) => item.productId))];
-            const alreadySold = await this.prismaService.product.findMany({
-                where: { id: { in: productIds }, status: ProductStatus.SOLD },
-                select: { id: true },
-            });
-
-            if (alreadySold.length === productIds.length) {
-                return;
-            }
+        if (!params.fromStatuses.includes(order.status)) {
+            throw new BadRequestException(`Order cannot be cancelled in its current status: ${order.status}`);
         }
 
-        const productIds = [...new Set(order.items.map((item) => item.productId))];
-        if (productIds.length === 0) {
-            return;
+        const wasPaid = order.status !== OrderStatus.PENDING;
+        const transaction = wasPaid
+            ? await this.paymentService.findPaidTransactionForOrder(order.id, order.userId)
+            : null;
+        const financedByTbi = transaction?.provider === PaymentProvider.TBI_CREDIT;
+
+        if (financedByTbi && params.actor !== OrderCancellationActor.ADMIN) {
+            throw new BadRequestException("This order was financed with TBI Credit. Please contact support to cancel it.");
         }
 
-        await this.prismaService.$transaction(async (tx) => {
-            for (const productId of productIds) {
-                const claimed = await tx.product.updateMany({
-                    where: {
-                        id: productId,
-                        status: ProductStatus.ACTIVE,
-                        authentication_status: AuthenticationStatus.VERIFIED,
+        let refund: { refund_amount?: number; currency?: string } | undefined;
+
+        const claimed = await this.prismaService.order.updateMany({
+            where: { id: orderId, status: order.status },
+            data: {
+                status: toStatus,
+                cancelled_at: new Date(),
+                cancelled_by_user_id: params.actorId,
+                cancelled_by_actor: params.actor,
+                cancellation_reason: params.reason,
+            },
+        });
+
+        if (claimed.count === 0) {
+            throw new ConflictException("This order was updated by someone else. Please refresh and try again.");
+        }
+
+        if (!wasPaid) {
+            await this.stripeService.expireCheckoutSessions([orderId], order.userId);
+        } else if (transaction && !financedByTbi) {
+            try {
+                refund = await this.stripeService.refundOrderPayment(orderId);
+            } catch (error) {
+                await this.prismaService.order.update({
+                    where: { id: orderId },
+                    data: {
+                        status: order.status,
+                        cancelled_at: null,
+                        cancelled_by_user_id: null,
+                        cancelled_by_actor: null,
+                        cancellation_reason: null,
                     },
-                    data: { status: ProductStatus.SOLD, sold_at: new Date() },
                 });
-
-                if (claimed.count === 0) {
-                    const product = await tx.product.findUnique({ where: { id: productId }, select: { name: true, status: true } });
-                    if (product?.status === ProductStatus.SOLD) {
-                        return;
-                    }
-                    throw new ConflictException(`${product?.name ?? "Product"} was just sold and is no longer available.`);
-                }
+                throw error;
             }
+        } else if (financedByTbi) {
+            this.logger.warn(`Order ${orderId} was cancelled by an admin: settle the refund with TBI manually.`);
+        } else {
+            this.logger.warn(`Paid order ${orderId} has no payment transaction, so nothing was refunded.`);
+        }
+
+        const productIds = order.items.map((item) => item.productId);
+        if (RELISTABLE_STATUSES.includes(order.status)) {
+            await this.prismaService.product.updateMany({
+                where: { id: { in: productIds }, status: ProductStatus.SOLD },
+                data: { status: ProductStatus.ACTIVE, sold_at: null },
+            });
+        } else if (!wasPaid) {
+            await this.releaseReservations(this.prismaService, productIds, order.userId);
+        }
+
+        const updated = await this.prismaService.order.findUniqueOrThrow({
+            where: { id: orderId },
+            include: this.getOrderDetailInclude(),
+        });
+
+        if (wasPaid) {
+            await this.sendOrderCancelledEmail(
+                updated,
+                financedByTbi
+                    ? "Your financing will be cancelled by TBI Bank. Our support team will contact you if anything else is needed."
+                    : this.getRefundNote(refund),
+            );
+        }
+
+        return updated;
+    }
+
+    private async advanceOrderStatus(orderId: number, fromStatus: OrderStatus, toStatus: OrderStatus) {
+        const claimed = await this.prismaService.order.updateMany({
+            where: { id: orderId, status: fromStatus },
+            data: { status: toStatus, ...this.getOrderTimelineUpdate(toStatus) },
+        });
+
+        if (claimed.count === 0) {
+            throw new ConflictException("This order was updated by someone else. Please refresh and try again.");
+        }
+
+        return this.prismaService.order.findUniqueOrThrow({
+            where: { id: orderId },
+            include: this.getOrderDetailInclude(),
         });
     }
 
     /**
-     * Relists a single-unit product after its order is cancelled, so it can be purchased again.
-     * Only restores items that are still SOLD (i.e. haven't been relisted or resold already).
+     * A buyer retrying checkout replaces their earlier attempt: its Stripe session is closed so it
+     * can no longer be paid, and its hold on the items is released for the new attempt.
      */
-    private async restoreProductsAfterCancellation(tx: Prisma.TransactionClient, productIds: number[]) {
-        if (productIds.length === 0) {
+    private async replaceOpenCheckouts(userId: number, productIds: number[]) {
+        const openOrders = await this.prismaService.order.findMany({
+            where: { userId, status: OrderStatus.PENDING, items: { some: { productId: { in: productIds } } } },
+            select: { id: true },
+        });
+
+        if (!openOrders.length) {
             return;
         }
-        await tx.product.updateMany({
-            where: { id: { in: productIds }, status: ProductStatus.SOLD },
-            data: { status: ProductStatus.ACTIVE, sold_at: null },
+
+        const orderIds = openOrders.map((order) => order.id);
+        await this.stripeService.expireCheckoutSessions(orderIds, userId);
+        await this.cancelPendingPaymentOrders(orderIds, "Replaced by a newer checkout attempt.");
+    }
+
+    private async reserveProducts(tx: Prisma.TransactionClient, productIds: number[], userId: number, minutes: number) {
+        const now = new Date();
+        const reservedUntil = new Date(now.getTime() + minutes * 60 * 1000);
+
+        for (const productId of new Set(productIds)) {
+            const reserved = await tx.product.updateMany({
+                where: {
+                    id: productId,
+                    status: ProductStatus.ACTIVE,
+                    authentication_status: AuthenticationStatus.VERIFIED,
+                    OR: [
+                        { reserved_until: null },
+                        { reserved_until: { lt: now } },
+                        { reserved_by_user_id: userId },
+                    ],
+                },
+                data: { reserved_until: reservedUntil, reserved_by_user_id: userId },
+            });
+
+            if (reserved.count === 0) {
+                throw new ConflictException("This item was just purchased by another buyer and is no longer available.");
+            }
+        }
+    }
+
+    private async releaseReservations(
+        client: Pick<Prisma.TransactionClient, "product">,
+        productIds: number[],
+        userId: number,
+    ) {
+        await client.product.updateMany({
+            where: { id: { in: productIds }, reserved_by_user_id: userId },
+            data: { reserved_until: null, reserved_by_user_id: null },
         });
+    }
+
+    private getSellerStatusFilter(status?: OrderStatus, sellerTab?: SellerOrderTab) {
+        if (status) {
+            return { in: SELLER_VISIBLE_STATUSES.filter((visible) => visible === status) };
+        }
+        if (sellerTab) {
+            return { in: this.getStatusesForSellerTab(sellerTab) };
+        }
+        return { in: SELLER_VISIBLE_STATUSES };
     }
 
     private getStatusesForBuyerTab(tab: BuyerOrderTab) {
@@ -1626,7 +1751,7 @@ export class OrderService {
 
     private getStatusesForSellerTab(tab: SellerOrderTab) {
         const tabMap: Record<SellerOrderTab, OrderStatus[]> = {
-            [SellerOrderTab.ORDER_PLACED]: [OrderStatus.PENDING],
+            [SellerOrderTab.ORDER_PLACED]: [OrderStatus.CONFIRMED],
             [SellerOrderTab.CONFIRMED]: [OrderStatus.CONFIRMED],
             [SellerOrderTab.SHIPPED]: [OrderStatus.PROCESSING, OrderStatus.SHIPPED],
             [SellerOrderTab.DELIVERED]: [OrderStatus.DELIVERED],
@@ -1693,6 +1818,49 @@ export class OrderService {
                     },
                 },
             },
+        };
+    }
+
+    private async formatAdminOrder(order: any) {
+        const transaction = await this.paymentService.findPaidTransactionForOrder(order.id, order.userId);
+        const financedByTbi = transaction?.provider === PaymentProvider.TBI_CREDIT;
+
+        return {
+            id: order.id,
+            display_id: this.getDisplayOrderId(order.id),
+            status: order.status,
+            status_label: this.getStatusLabel(order.status),
+            createdAt: order.createdAt,
+            total: order.total,
+            currency: CurrencyPreference.USD,
+            buyer: order.user,
+            seller: order.seller,
+            item_count: order.items.length,
+            preview_item: order.items[0]?.product?.name ?? null,
+            payment: transaction
+                ? {
+                      provider: transaction.provider,
+                      status: transaction.status,
+                      payment_status: transaction.payment_status,
+                      amount: transaction.amount,
+                      currency: transaction.currency,
+                  }
+                : null,
+            platform_fee_percent: order.platform_fee_percent,
+            seller_net_amount: order.seller_net_amount,
+            payout: financedByTbi
+                ? {
+                      method: "MANUAL",
+                      status: order.seller_payout_at
+                          ? "PAID"
+                          : order.status === OrderStatus.DELIVERED
+                            ? "DUE"
+                            : "NOT_DUE",
+                      paid_at: order.seller_payout_at,
+                      reference: order.seller_payout_reference,
+                      ...this.paymentService.getManualPayout(transaction, order),
+                  }
+                : { method: "AUTOMATIC" },
         };
     }
 
@@ -1818,7 +1986,6 @@ export class OrderService {
                 can_message_buyer: true,
             },
             status_options: [
-                OrderStatus.PENDING,
                 OrderStatus.CONFIRMED,
                 OrderStatus.SHIPPED,
                 OrderStatus.DELIVERED,
@@ -1862,7 +2029,7 @@ export class OrderService {
 
     private getStatusLabel(status: OrderStatus) {
         const labels: Record<OrderStatus, string> = {
-            [OrderStatus.PENDING]: "Order Placed",
+            [OrderStatus.PENDING]: "Awaiting Payment",
             [OrderStatus.CONFIRMED]: "Confirmed",
             [OrderStatus.PROCESSING]: "Shipped",
             [OrderStatus.SHIPPED]: "Shipped",

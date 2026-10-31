@@ -12,10 +12,15 @@ import { ReplyContactRequestDto } from "./dtos/reply-contact-request.dto";
 import { LegalDocumentType, ContactStatus } from "generated/prisma/client";
 import { ContactRequestQueryDto, toContactStatus } from "./dtos/contact-request-query.dto";
 import { assertEntityExists } from "src/common/validators/entity-exists.validator";
+import { SMTPProvider } from "src/common/providres/smtp.provider";
+import contactReplyTemplate from "src/common/templates/contactReply.template";
 
 @Injectable()
 export class ContentService {
-    constructor(private readonly prismaService: PrismaService) {}
+    constructor(
+        private readonly prismaService: PrismaService,
+        private readonly smtpProvider: SMTPProvider,
+    ) {}
 
     // ─── FAQ Categories ───────────────────────────────────────────────────────────
 
@@ -197,6 +202,12 @@ export class ContentService {
             where: { id },
             data: { reply: dto.reply, status: ContactStatus.RESOLVED },
         });
+
+        await this.smtpProvider.sendMail(
+            request.email,
+            "Your BestKid support request",
+            contactReplyTemplate({ name: request.name, reply: dto.reply }),
+        );
 
         return this.formatContactRequest(updated);
     }

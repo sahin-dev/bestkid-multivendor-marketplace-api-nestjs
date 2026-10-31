@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from "@nestjs/swagger";
 import { Type } from "class-transformer";
-import { IsInt, IsOptional, IsString, Min } from "class-validator";
+import { IsInt, IsOptional, IsString, Min, Max } from "class-validator";
 
 export class ChatRoomsQueryDto {
     @IsOptional()
@@ -15,6 +15,7 @@ export class ChatRoomsQueryDto {
     @IsInt()
     @Min(1)
     @ApiPropertyOptional({ default: 10 })
+    @Max(100)
     limit?: number = 10;
 
     @IsOptional()

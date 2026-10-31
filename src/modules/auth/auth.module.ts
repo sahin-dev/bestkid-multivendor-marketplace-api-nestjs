@@ -1,4 +1,4 @@
-import { DynamicModule, Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthService } from './providers/auth.service';
 import { AuthController } from './auth.controller';
@@ -13,6 +13,8 @@ import { UUIdProvider } from 'src/common/providres/uuid.provider';
 import { APP_GUARD } from '@nestjs/core';
 import { JwtGuard } from './guards/jwt.guard';
 import { RolesGuard } from 'src/common/guards/roles.guards';
+import jwtConfig from 'src/config/jwt.config';
+import type { ConfigType } from '@nestjs/config';
 
 
 
@@ -22,10 +24,20 @@ import { RolesGuard } from 'src/common/guards/roles.guards';
     { provide: APP_GUARD, useClass: RolesGuard },],
   controllers:[AuthController],
   exports:[UserService, EncoderProvider, AuthProvider],
-  imports:[PrismaModule, JwtModule.register({
+  imports:[PrismaModule, JwtModule.registerAsync({
     global:true,
-    secret:"MySecret",
-    signOptions:{expiresIn:"365d"}
+    inject:[jwtConfig.KEY],
+    useFactory:(config:ConfigType<typeof jwtConfig>)=>{
+      if(!config.jwt_secret){
+        throw new Error("JWT_SECRET is not configured.")
+      }
+
+      return {
+        secret:config.jwt_secret,
+        signOptions:{expiresIn:(config.expires_in ?? "7d") as any, algorithm:"HS256"},
+        verifyOptions:{algorithms:["HS256"]},
+      }
+    },
   })
 ]
 })

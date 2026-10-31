@@ -27,6 +27,9 @@ model Product {
   approved_at         DateTime?
   rejected_at         DateTime?
   sold_at             DateTime?
+  // A unique item is held for the buyer while their checkout is open, so it cannot be sold twice
+  reserved_until      DateTime?
+  reserved_by_user_id Int?
   authentication_requests ProductAuthenticationRequest[]
   subCategory         SubCategory     @relation(fields: [subCategoryId], references: [id])
   category            Category        @relation(fields: [categoryId], references: [id])
@@ -35,6 +38,10 @@ model Product {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([status, createdAt])
+  @@index([userId, status])
+  @@index([categoryId])
+  @@index([subCategoryId])
   @@map("products")
 }
 

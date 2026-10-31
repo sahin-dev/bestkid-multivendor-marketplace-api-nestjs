@@ -20,6 +20,10 @@ type SeedCategory = {
   subCategories: { id: number }[];
 };
 
+if (process.env.NODE_ENV === "production") {
+  throw new Error("The demo seed creates accounts with a shared password and must not run in production.");
+}
+
 const password = "Password123!";
 
 const categoryData = [

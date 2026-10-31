@@ -5,13 +5,16 @@ import {
     Headers,
     HttpCode,
     HttpStatus,
+    Param,
+    ParseIntPipe,
     Patch,
     Post,
     Query,
     Req,
 } from "@nestjs/common";
 import type { RawBodyRequest } from "@nestjs/common";
-import { ApiBearerAuth, ApiBody, ApiOperation, ApiQuery, ApiTags } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiTags } from "@nestjs/swagger";
+import { SkipThrottle, Throttle } from "@nestjs/throttler";
 import { GetUser, Public, Roles } from "src/common/decorators";
 import { StripeService } from "./stripe.service";
 import { OnboardSellerDto } from "./dtos/onboard-seller.dto";
@@ -32,6 +35,7 @@ export class StripeController {
     }
 
     @Post("checkout-session")
+    @Throttle({ default: { limit: 20, ttl: 60_000 } })
     @ApiOperation({ summary: "Create buyer Stripe checkout session", description: "Creates a hosted Stripe Checkout payment session from the authenticated buyer's current cart, selected address, and optional coupon." })
     @ApiBody({ type: CreateStripeCheckoutSessionDto })
     async createCheckoutSession(@GetUser("id") userId: number, @Body() dto: CreateStripeCheckoutSessionDto) {
@@ -39,6 +43,7 @@ export class StripeController {
     }
 
     @Post("buy-now-session")
+    @Throttle({ default: { limit: 20, ttl: 60_000 } })
     @ApiOperation({ summary: "Create direct Buy Now Stripe checkout session", description: "Creates a hosted Stripe Checkout payment session for one product from the product details page without adding it to cart." })
     @ApiBody({ type: CreateBuyNowCheckoutSessionDto })
     async createBuyNowCheckoutSession(@GetUser("id") userId: number, @Body() dto: CreateBuyNowCheckoutSessionDto) {
@@ -63,6 +68,7 @@ export class StripeController {
 
     @Post("webhook")
     @Public()
+    @SkipThrottle()
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: "Stripe webhook endpoint", description: "Stripe calls this endpoint with a raw request body and stripe-signature header." })
     async webhook(
@@ -70,6 +76,14 @@ export class StripeController {
         @Headers("stripe-signature") signature: string,
     ) {
         return this.stripeService.handleWebhook(req.rawBody!, signature);
+    }
+
+    @Post("admin/orders/:id/payout")
+    @Roles("ADMIN")
+    @ApiOperation({ summary: "Admin: pay the seller of a delivered TBI-financed order", description: "Use once TBI has settled with the platform. Sent from the platform's Stripe balance." })
+    @ApiParam({ name: "id", type: Number })
+    async payOutFinancedOrder(@Param("id", ParseIntPipe) orderId: number) {
+        return this.stripeService.payOutFinancedOrder(orderId);
     }
 
     @Get("admin/accounts")

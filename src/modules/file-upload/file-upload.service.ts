@@ -1,11 +1,14 @@
 import {
   Injectable,
   BadRequestException,
+  ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Multer } from 'multer';
+import { detectUploadExtension } from 'src/common/upload/upload.options';
 
 @Injectable()
 export class FileUploadService {
@@ -18,17 +21,24 @@ export class FileUploadService {
     }
   }
 
-  async uploadFile(file: Express.Multer.File): Promise<{ filePath: string }> {
+  async uploadFile(
+    file: Express.Multer.File,
+    ownerId: number,
+  ): Promise<{ filePath: string }> {
     if (!file) {
       throw new BadRequestException('No file provided.');
     }
 
-    // Build a unique filename: timestamp-originalname
-    const uniqueName = `${Date.now()}-${file.originalname}`;
-    const filePath = path.join(this.uploadDir, uniqueName);
+    const extension = detectUploadExtension(file.buffer);
+    if (!extension) {
+      throw new BadRequestException('Unsupported file content.');
+    }
+
+    // The owner prefix is what deleteFile uses to authorize removal
+    const uniqueName = `${ownerId}-${randomUUID()}.${extension}`;
 
     try {
-      fs.writeFileSync(filePath, file.buffer);
+      await fs.promises.writeFile(path.join(this.uploadDir, uniqueName), file.buffer);
     } catch (error) {
       throw new BadRequestException('Failed to save file.');
     }
@@ -37,25 +47,32 @@ export class FileUploadService {
     return { filePath: `/uploads/${uniqueName}` };
   }
 
-  async deleteFile(filePath: string): Promise<{ message: string }> {
+  async deleteFile(
+    filePath: string,
+    actorId: number,
+    isAdmin = false,
+  ): Promise<{ message: string }> {
     if (!filePath) {
       throw new BadRequestException('File path is required.');
     }
 
-    const absolutePath = path.join(process.cwd(), filePath);
+    const fileName = path.posix.basename(filePath);
 
     // Prevent directory traversal
-    if (!absolutePath.startsWith(this.uploadDir)) {
+    if (path.posix.normalize(filePath) !== `/uploads/${fileName}`) {
       throw new BadRequestException('Invalid file path.');
     }
 
-    if (!fs.existsSync(absolutePath)) {
-      throw new NotFoundException('File not found.');
+    if (!isAdmin && !fileName.startsWith(`${actorId}-`)) {
+      throw new ForbiddenException('You can only delete files you uploaded.');
     }
 
     try {
-      fs.unlinkSync(absolutePath);
+      await fs.promises.unlink(path.join(this.uploadDir, fileName));
     } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new NotFoundException('File not found.');
+      }
       throw new BadRequestException('Failed to delete file.');
     }
 

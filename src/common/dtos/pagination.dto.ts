@@ -13,5 +13,6 @@ export class PaginationDto {
     @Transform(({ value }) => Number(value))
     @IsNotEmpty()
     @Min(1)
+    @Max(100)
     limit: number = 20
 }

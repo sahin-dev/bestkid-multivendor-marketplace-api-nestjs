@@ -33,6 +33,8 @@ model PaymentTransaction {
   @@index([provider_reference_id])
   @@index([provider_application_id])
   @@index([provider_status])
+  @@index([status, createdAt])
+  @@index([stripe_payment_intent_id])
 }
 
 enum PaymentProvider {

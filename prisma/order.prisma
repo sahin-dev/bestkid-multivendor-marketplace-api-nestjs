@@ -26,6 +26,15 @@ model Order {
   country         String?
   stripe_checkout_session_id String? @unique
 
+  // Snapshot at payment, so a later change of seller tier or fee cannot rewrite past earnings.
+  // seller_net_amount is what the seller keeps in USD, and goes down when a return is refunded.
+  platform_fee_percent Float?
+  seller_net_amount    Float?
+  // Financed orders are paid out by an admin once the bank has settled. Card payments transfer
+  // to the seller at checkout and never use these.
+  seller_payout_at        DateTime?
+  seller_payout_reference String?
+
   items    OrderItem[]
   payment_transactions PaymentTransaction[]
   user     BaseUser    @relation("BuyerOrders",  fields: [userId],   references: [id])
@@ -55,6 +64,7 @@ model OrderItem {
   updatedAt DateTime @updatedAt
 
   @@map("order_items")
+  @@index([orderId])
   @@index([productId])
 }
 

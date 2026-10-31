@@ -1,22 +1,38 @@
+# Secrets come from the environment or an untracked .env.docker: see .env.example.
+# Startup fails with a clear message if a required value is missing.
 services:
   postgres:
     image: postgres:16-alpine
     container_name: bestkid-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: bestkid
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${DB_NAME:-bestkid}
+      POSTGRES_USER: ${DB_USER:-bestkid}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+    # Not published to the host: only the app can reach the database
+    expose:
+      - "5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d bestkid"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: build
+    container_name: bestkid-migrate
+    command: ["pnpm", "prisma", "migrate", "deploy"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-bestkid}:${DB_PASSWORD:?Set DB_PASSWORD}@postgres:5432/${DB_NAME:-bestkid}?schema=public
 
   app:
     build:
@@ -25,42 +41,19 @@ services:
     container_name: bestkid-app
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     env_file:
-      - .env.docker
+      - path: .env.docker
+        required: false
     environment:
-      NODE_ENV: production
+      DATABASE_URL: postgresql://${DB_USER:-bestkid}:${DB_PASSWORD:?Set DB_PASSWORD}@postgres:5432/${DB_NAME:-bestkid}?schema=public
       PORT: 3000
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: bestkid
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/bestkid?schema=public
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
-      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
-      SWAGGER_SERVER_URL: ${SWAGGER_SERVER_URL:-http://localhost:3000}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
-      BASE_PATH: ${BASE_PATH:-http://localhost:3000}
-      MAILER_HOST: ${MAILER_HOST:-smtp.example.com}
-      MAILER_PORT: ${MAILER_PORT:-587}
-      MAILER_MAIL: ${MAILER_MAIL:-hello@example.com}
-      MAILER_PASSWORD: ${MAILER_PASSWORD:-your-password}
-      MAILER_SERVICE: ${MAILER_SERVICE:-Gmail}
-      STRIPE_KEY: ${STRIPE_KEY:-}
-      STRIPE_WEBHOOK: ${STRIPE_WEBHOOK:-}
-      LEGITGRAILS_ENABLED: ${LEGITGRAILS_ENABLED:-false}
-      LEGITGRAILS_BASE_URL: ${LEGITGRAILS_BASE_URL:-https://api.legitgrails.com/v1/integrations}
-      LEGITGRAILS_API_KEY: ${LEGITGRAILS_API_KEY:-}
-      LEGITGRAILS_TEST_MODE: ${LEGITGRAILS_TEST_MODE:-true}
-      LEGITGRAILS_WEBHOOK_SIGNING_SECRET: ${LEGITGRAILS_WEBHOOK_SIGNING_SECRET:-}
-      LEGITGRAILS_WEBHOOK_MAX_CLOCK_SKEW_SECONDS: ${LEGITGRAILS_WEBHOOK_MAX_CLOCK_SKEW_SECONDS:-300}
-      LEGITGRAILS_TIMEOUT_MS: ${LEGITGRAILS_TIMEOUT_MS:-15000}
     ports:
       - "3000:3000"
     volumes:
-      - ./uploads:/usr/src/app/uploads
+      - uploads:/usr/src/app/uploads
 
 volumes:
   postgres_data:
+  uploads:

@@ -33,6 +33,7 @@ export class ProductQueryDto {
     @IsInt()
     @Min(1)
     @ApiPropertyOptional({ default: 10, description: "Number of items per page" })
+    @Max(100)
     limit?: number = 10;
 
     @IsOptional()

@@ -1,5 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Patch, Post, Query } from "@nestjs/common";
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from "@nestjs/swagger";
+import { Throttle } from "@nestjs/throttler";
 import { Public, Roles } from "src/common/decorators";
 import { PaginationDto } from "src/common/dtos/pagination.dto";
 import { ContentService } from "./content.service";
@@ -144,6 +145,7 @@ export class ContentController {
 
     @Post("contact")
     @Public()
+    @Throttle({ default: { limit: 5, ttl: 60_000 } })
     @ApiOperation({ summary: "Submit a help and support request" })
     @ApiBody({ type: CreateContactRequestDto })
     submitContactRequest(@Body() dto: CreateContactRequestDto) {

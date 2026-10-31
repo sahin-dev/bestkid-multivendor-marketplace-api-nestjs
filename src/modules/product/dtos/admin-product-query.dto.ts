@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from "@nestjs/swagger";
 import { Type } from "class-transformer";
-import { IsEnum, IsInt, IsOptional, IsString, Min } from "class-validator";
+import { IsEnum, IsInt, IsOptional, IsString, Min, Max } from "class-validator";
 import { AuthenticationStatus, ProductStatus } from "generated/prisma/client";
 
 export enum AdminProductApprovalFilter {
@@ -23,6 +23,7 @@ export class AdminProductQueryDto {
     @IsInt()
     @Min(1)
     @ApiPropertyOptional({ default: 10 })
+    @Max(100)
     limit?: number = 10;
 
     @IsOptional()

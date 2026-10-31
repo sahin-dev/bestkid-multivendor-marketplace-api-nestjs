@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from "@nestjs/swagger";
 import { Type } from "class-transformer";
-import { IsEnum, IsInt, IsOptional, Min } from "class-validator";
+import { IsEnum, IsInt, IsOptional, Min, Max } from "class-validator";
 import { AdminPeriod } from "./admin-period-query.dto";
 
 export class AdminEarningsQueryDto {
@@ -21,5 +21,6 @@ export class AdminEarningsQueryDto {
     @IsInt()
     @Min(1)
     @ApiPropertyOptional({ default: 10 })
+    @Max(100)
     limit?: number = 10;
 }

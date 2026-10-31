@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from "@nestjs/common";
+import { Injectable, Logger, NotFoundException, BadRequestException, ForbiddenException, ConflictException } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateProductDto } from "./dtos/create-product.dto";
 import { UpdateProductDto } from "./dtos/update-product.dto";
@@ -12,8 +12,21 @@ import { NotificationService } from "../notification/notification.service";
 import { CurrencyConversionService } from "../currency/currency.service";
 import { CurrencyPreference } from "generated/prisma/client";
 
+// What the public may see about a product's authentication. The rest of the request row holds
+// the raw provider exchange.
+const PUBLIC_AUTHENTICATION_REQUEST_SELECT = {
+    id: true,
+    status: true,
+    verdict: true,
+    certificateUrl: true,
+    completedAt: true,
+    image_urls: true,
+} as const;
+
 @Injectable()
 export class ProductService {
+    private readonly logger = new Logger(ProductService.name);
+
     constructor(
         private readonly prismaService: PrismaService,
         private readonly notificationService: NotificationService,
@@ -40,6 +53,10 @@ export class ProductService {
     }
 
     async createProduct(userId: number, dto: CreateProductDto) {
+        if (dto.status === ProductStatus.SOLD) {
+            throw new BadRequestException("A new listing cannot be created as sold.");
+        }
+
         await this.assertSellerCanCreateProduct(userId, dto.status);
 
         await this.validateCategoryPair(dto.categoryId, dto.subCategoryId);
@@ -116,7 +133,6 @@ export class ProductService {
             whereClause.authentication_status = authenticationStatus;
             whereClause.status = ProductStatus.INACTIVE
         }
-        console.log(whereClause)
         const products = await this.prismaService.product.findMany({
             where: whereClause,
             orderBy: this.getProductOrderBy(sort),
@@ -153,19 +169,21 @@ export class ProductService {
     async findSellerProductById(productId: number, sellerId: number, isAdmin = false) {
 
         const product = await this.getProductForMutation(productId);
-    
+
         this.assertCanMutateProduct(product, sellerId, isAdmin);
-        try{
-            const [reviews, ordersCount] = await Promise.all([
-            this.findReviews(productId,{ page: 1, limit: 5 },sellerId ),
+
+        const [reviews, ordersCount] = await Promise.all([
+            this.findReviews(productId, { page: 1, limit: 5 }),
             this.prismaService.order.count({
                 where: {
                     sellerId: product.userId,
                     items: { some: { productId } },
+                    status: { not: OrderStatus.PENDING },
                 },
             }),
         ]);
-         return {
+
+        return {
             ...this.formatSellerProductDetail(product),
             reviews: reviews.data,
             orders_count: ordersCount,
@@ -178,17 +196,12 @@ export class ProductService {
                 can_delete: true,
             },
         };
-        }catch(err){
-            console.log(err)
-        }
-        
-
-       
     }
 
     async updateSellerProductStatus(productId: number, sellerId: number, status: ProductStatus, isAdmin = false) {
         const product = await this.getProductForMutation(productId);
         this.assertCanMutateProduct(product, sellerId, isAdmin);
+        this.assertCanChangeStatus(product, status);
 
         if (status === ProductStatus.ACTIVE) {
             await this.assertCanPublishProduct(product.userId, product.authentication_status);
@@ -304,6 +317,7 @@ export class ProductService {
                         authentication_requests: {
                             orderBy: [{ createdAt: Prisma.SortOrder.desc }],
                             take: 1,
+                            select: PUBLIC_AUTHENTICATION_REQUEST_SELECT,
                         },
                     },
                 orderBy,
@@ -336,12 +350,17 @@ export class ProductService {
     async findProductById(id: number, userId?: number, isAdmin = false) {
 
         const userCurrency = userId ? await this.getUserCurrency(userId) : CurrencyPreference.USD;
-       
+
         const product = await this.prismaService.product.findUnique({
             where: { id },
             include: {
                 user: {
-                    
+                    select: {
+                        id: true,
+                        stripe_account_id: true,
+                        stripe_onboarding_complete: true,
+                        profile: { select: { full_name: true, avatar_url: true, country: true } },
+                    },
                 },
                 category: true,
                 subCategory: true,
@@ -360,14 +379,12 @@ export class ProductService {
                 authentication_requests: {
                     orderBy: [{ createdAt: Prisma.SortOrder.desc }],
                     take: 1,
+                    select: PUBLIC_AUTHENTICATION_REQUEST_SELECT,
                 },
             },
         });
 
-        
-       
         if (!product) {
-           
             throw new NotFoundException(`Product with ID ${id} not found`);
         }
 
@@ -399,7 +416,9 @@ export class ProductService {
             this.findRelatedProducts(id, product.categoryId, userId),
         ]);
 
-        const convertedProduct = await this.applyUserCurrency(this.mergeProductImageUrls(product), userCurrency);
+        // The gate above needs the seller's Stripe fields, but they are not public
+        const { stripe_account_id, stripe_onboarding_complete, ...seller } = product.user;
+        const convertedProduct = await this.applyUserCurrency(this.mergeProductImageUrls({ ...product, user: seller }), userCurrency);
         const convertedRelatedProducts = await Promise.all(
             relatedProducts.map(async (item) => this.applyUserCurrency(this.mergeProductImageUrls(item), userCurrency)),
         );
@@ -423,6 +442,16 @@ export class ProductService {
 
         if (dto.categoryId || dto.subCategoryId) {
             await this.validateCategoryPair(categoryId, subCategoryId);
+        }
+
+        if (dto.status !== undefined) {
+            this.assertCanChangeStatus(existingProduct, dto.status);
+        }
+
+        this.assertNotInCheckout(existingProduct);
+
+        if (!isAdmin) {
+            this.assertKeepsVerifiedIdentity(existingProduct, dto);
         }
 
         if (dto.status === ProductStatus.ACTIVE) {
@@ -474,7 +503,7 @@ export class ProductService {
 
     async createReview(productId: number, userId: number, dto: CreateReviewDto) {
         await assertEntityExists(this.prismaService.baseUser, "User", userId);
-        await this.findProductById(productId);
+        await assertEntityExists(this.prismaService.product, "Product", productId);
         this.assertReviewTextWithinWordLimit(dto.review);
 
         const deliveredOrderItem = await this.prismaService.orderItem.findFirst({
@@ -520,8 +549,8 @@ export class ProductService {
         return newReview;
     }
 
-    async findReviews(productId: number, query: PaginationDto = { page: 1, limit: 10 },sellerId?:number) {
-        await this.findProductById(productId, sellerId);
+    async findReviews(productId: number, query: PaginationDto = { page: 1, limit: 10 }) {
+        await assertEntityExists(this.prismaService.product, "Product", productId);
 
         const { page = 1, limit = 10 } = query ?? {};
         const skip = (page - 1) * limit;
@@ -769,7 +798,7 @@ export class ProductService {
                 NotificationType.AUTHENTICATION,
             );
         } catch (error) {
-            console.error("Failed to send product authentication notification", error);
+            this.logger.error("Failed to send product authentication notification", error instanceof Error ? error.stack : error);
         }
 
         return updatedProduct;
@@ -997,6 +1026,40 @@ export class ProductService {
         return Boolean(seller?.stripe_onboarding_complete && seller.stripe_account_id);
     }
 
+    // SOLD is only left through an order being cancelled or refunded, which handles the money too
+    private assertCanChangeStatus(product: { status: ProductStatus }, status: ProductStatus) {
+        if (product.status === ProductStatus.SOLD && status !== ProductStatus.SOLD) {
+            throw new BadRequestException("A sold item cannot be relisted.");
+        }
+    }
+
+    // Authentication vouches for this exact item, so swapping its name or photos afterwards would
+    // pass off something else as verified. Price, description, and the rest stay editable.
+    private assertKeepsVerifiedIdentity(
+        product: { authentication_status: AuthenticationStatus; name: string; image_urls: string[] },
+        dto: UpdateProductDto,
+    ) {
+        if (product.authentication_status !== AuthenticationStatus.VERIFIED) {
+            return;
+        }
+
+        const nameChanged = dto.name !== undefined && dto.name !== product.name;
+        const imagesChanged =
+            dto.image_urls !== undefined &&
+            (dto.image_urls.length !== product.image_urls.length ||
+                dto.image_urls.some((url) => !product.image_urls.includes(url)));
+
+        if (nameChanged || imagesChanged) {
+            throw new BadRequestException("The name and photos of a verified item cannot be changed.");
+        }
+    }
+
+    private assertNotInCheckout(product: { reserved_until: Date | null }) {
+        if (product.reserved_until && product.reserved_until > new Date()) {
+            throw new ConflictException("This item is in a buyer's checkout. Try again once it is released.");
+        }
+    }
+
     private assertReviewTextWithinWordLimit(review?: string) {
         if (!review) {
             return;
@@ -1130,7 +1193,7 @@ export class ProductService {
             where: { id },
             include: this.getSellerProductInclude(),
         });
-        
+
         if (!product) {
             throw new NotFoundException(`Product with ID ${id} not found`);
         }

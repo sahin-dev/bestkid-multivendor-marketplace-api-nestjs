@@ -1,14 +1,17 @@
 import {
     BadGatewayException,
     BadRequestException,
+    forwardRef,
     Inject,
     Injectable,
     Logger,
     NotFoundException,
 } from "@nestjs/common";
 import type { ConfigType } from "@nestjs/config";
+import { Cron, CronExpression } from "@nestjs/schedule";
 import { PrismaService } from "../prisma/prisma.service";
 import stripeConfig, { StripeConfig } from "src/config/stripe.config";
+import { getSellerFeePercent } from "src/config/seller-fee";
 import Stripe from "stripe";
 import { OrderService } from "../order/order.service";
 import { PaymentService } from "../payment/payment.service";
@@ -16,8 +19,15 @@ import {
     CreateBuyNowCheckoutSessionDto,
     CreateStripeCheckoutSessionDto,
 } from "../order/dtos/checkout-flow.dto";
-import { CurrencyPreference, PaymentStatus, SellerTier } from "generated/prisma/client";
+import { CurrencyPreference, NotificationType, OrderStatus, PaymentProvider, PaymentStatus, ReturnStatus, SellerTier } from "generated/prisma/client";
 import { CurrencyConversionService } from "../currency/currency.service";
+import { NotificationService } from "../notification/notification.service";
+
+// Stripe's minimum session lifetime is 30 minutes. The hold on the items outlives the session, so
+// an item cannot be resold while a buyer is still able to complete payment for it.
+const CHECKOUT_SESSION_MINUTES = 31;
+const CHECKOUT_RESERVATION_MINUTES = 40;
+const ORDER_CANCELLATION_REFUND = "ORDER_CANCELLATION";
 
 type SellerPaymentProfile = {
     id: number;
@@ -39,9 +49,11 @@ export class StripeService {
 
     constructor(
         private readonly prismaService: PrismaService,
+        @Inject(forwardRef(() => OrderService))
         private readonly orderService: OrderService,
         private readonly paymentService: PaymentService,
         private readonly currencyService: CurrencyConversionService,
+        private readonly notificationService: NotificationService,
         @Inject(stripeConfig.KEY)
         private readonly stripeConfiguration: ConfigType<typeof StripeConfig>,
     ) {
@@ -188,6 +200,9 @@ export class StripeService {
             });
         }
 
+        // Exact items win over a whole-seller selection
+        const sellerIds = dto.cartItemIds?.length ? undefined : dto.sellerIds;
+
         const user = await this.prismaService.baseUser.findUnique({
             where: { id: userId },
             select: { email: true },
@@ -199,7 +214,7 @@ export class StripeService {
         const checkoutSummary = await this.orderService.getCheckoutSummary(
             userId,
             {
-                sellerIds: dto.sellerIds,
+                sellerIds,
                 cartItemIds: dto.cartItemIds,
                 addressId: dto.addressId,
                 country: dto.country,
@@ -208,7 +223,7 @@ export class StripeService {
         );
         const checkoutSummaryUsd =
             await this.orderService.getCheckoutSummaryForPayment(userId, {
-                sellerIds: dto.sellerIds,
+                sellerIds,
                 cartItemIds: dto.cartItemIds,
                 addressId: dto.addressId,
                 country: dto.country,
@@ -236,7 +251,7 @@ export class StripeService {
         const orderResult = await this.orderService.createPendingCartOrders(
             userId,
             {
-                sellerIds: dto.sellerIds,
+                sellerIds,
                 cartItemIds: dto.cartItemIds,
                 addressId: dto.addressId,
                 shippingAddress: dto.shippingAddress,
@@ -246,6 +261,7 @@ export class StripeService {
                 couponCode: dto.couponCode,
                 acceptedTerms: true,
             },
+            CHECKOUT_RESERVATION_MINUTES,
         );
 
         const orderIds = orderResult.orders.map((o) => o.id).join(",");
@@ -286,9 +302,12 @@ export class StripeService {
         });
 
         // Step 2: Create Stripe checkout session with orderId in metadata
-        const session = await this.stripe.checkout.sessions.create({
+        const session = await this.createSessionOrReleaseOrders(
+            orderResult.orders.map((order) => order.id),
+            {
             mode: "payment",
             payment_method_types: ["card"],
+            expires_at: this.getSessionExpiry(),
             success_url: dto.successUrl,
             cancel_url: dto.cancelUrl,
             customer_email: user.email,
@@ -324,7 +343,8 @@ export class StripeService {
                 currency: paymentCurrency,
                 transferGroup,
             },
-        });
+            },
+        );
 
         // Step 3: Create pending payment transaction
         await this.paymentService.createPendingTransaction({
@@ -443,14 +463,16 @@ export class StripeService {
                 couponCode: dto.couponCode,
                 acceptedTerms: true,
             },
+            CHECKOUT_RESERVATION_MINUTES,
         );
 
         const orderId = orderResult.order.id;
 
         // Step 2: Create Stripe checkout session with orderId in metadata
-        const session = await this.stripe.checkout.sessions.create({
+        const session = await this.createSessionOrReleaseOrders([orderId], {
             mode: "payment",
             payment_method_types: ["card"],
+            expires_at: this.getSessionExpiry(),
             success_url: dto.successUrl,
             cancel_url: dto.cancelUrl,
             customer_email: user.email,
@@ -521,43 +543,6 @@ export class StripeService {
         };
     }
 
-    private getPlatformFeePercent(sellerTier: SellerTier) {
-        const configuredPercent = Number(
-            this.getConfiguredTierFeePercent(sellerTier),
-        );
-        if (
-            !Number.isFinite(configuredPercent) ||
-            configuredPercent < 0 ||
-            configuredPercent > 100
-        ) {
-            throw new BadRequestException(
-                `${this.getTierFeeConfigName(sellerTier)} must be a number between 0 and 100.`,
-            );
-        }
-        return configuredPercent;
-    }
-
-    private getConfiguredTierFeePercent(sellerTier: SellerTier) {
-        const tierPercent: Record<SellerTier, string | number | undefined> = {
-            [SellerTier.BASIC_SELLER]:
-                this.stripeConfiguration.basic_seller_fee_percent ?? 10,
-            [SellerTier.STANDARD_SELLER]:
-                this.stripeConfiguration.standard_seller_fee_percent ?? 10,
-            [SellerTier.PREMIUM_SELLER]:
-                this.stripeConfiguration.premium_seller_fee_percent ?? 10,
-        };
-        return tierPercent[sellerTier];
-    }
-
-    private getTierFeeConfigName(sellerTier: SellerTier) {
-        const names: Record<SellerTier, string> = {
-            [SellerTier.BASIC_SELLER]: "STRIPE_BASIC_SELLER_FEE_PERCENT",
-            [SellerTier.STANDARD_SELLER]: "STRIPE_STANDARD_SELLER_FEE_PERCENT",
-            [SellerTier.PREMIUM_SELLER]: "STRIPE_PREMIUM_SELLER_FEE_PERCENT",
-        };
-        return names[sellerTier];
-    }
-
     private calculatePlatformFeeAmount(
         amountInCents: number,
         platformFeePercent: number,
@@ -572,7 +557,7 @@ export class StripeService {
         amountInCents: number,
         sellerTier: SellerTier,
     ): PaymentSplit {
-        const platformFeePercent = this.getPlatformFeePercent(sellerTier);
+        const platformFeePercent = getSellerFeePercent(sellerTier);
         const platformFeeAmount = this.calculatePlatformFeeAmount(
             amountInCents,
             platformFeePercent,
@@ -641,7 +626,7 @@ export class StripeService {
             return undefined;
         }
 
-        const baseUrl = process.env.SWAGGER_SERVER_URL?.trim();
+        const baseUrl = (process.env.API_PUBLIC_URL ?? process.env.SWAGGER_SERVER_URL)?.trim();
         if (!baseUrl) {
             return undefined;
         }
@@ -727,8 +712,53 @@ export class StripeService {
         };
     }
 
+    // details_submitted alone is not enough: Stripe rejects charges until the account is enabled
     private isStripeOnboardingComplete(account: Stripe.Account) {
-        return Boolean(account.details_submitted);
+        return Boolean(account.details_submitted && account.charges_enabled);
+    }
+
+    private getSessionExpiry() {
+        return Math.floor(Date.now() / 1000) + CHECKOUT_SESSION_MINUTES * 60;
+    }
+
+    private async createSessionOrReleaseOrders(
+        orderIds: number[],
+        params: Stripe.Checkout.SessionCreateParams,
+    ) {
+        try {
+            return await this.stripe.checkout.sessions.create(params);
+        } catch (err) {
+            await this.orderService.cancelPendingPaymentOrders(
+                orderIds,
+                "Stripe checkout session could not be created.",
+            );
+            throw err;
+        }
+    }
+
+    /**
+     * Closes the Stripe sessions behind orders that are being abandoned, so a stale tab can no
+     * longer take a payment for them.
+     */
+    async expireCheckoutSessions(orderIds: number[], buyerId: number) {
+        const transactions = await this.paymentService.findOpenTransactionsForOrders(orderIds, buyerId);
+
+        for (const transaction of transactions) {
+            if (transaction.stripe_session_id) {
+                try {
+                    await this.stripe.checkout.sessions.expire(transaction.stripe_session_id);
+                } catch (err: any) {
+                    this.logger.warn(
+                        `Could not expire Stripe session ${transaction.stripe_session_id}: ${err?.message}`,
+                    );
+                }
+            }
+
+            await this.paymentService.updateProviderStatus(transaction.id, {
+                status: PaymentStatus.CANCELLED,
+                paymentStatus: "expired",
+            });
+        }
     }
 
     /**
@@ -761,16 +791,31 @@ export class StripeService {
         }
 
         if (event.type === "checkout.session.completed") {
-            const session = event.data.object as Stripe.Checkout.Session;
-            await this.paymentService.markSucceeded(
-                session.id,
-                session.payment_intent?.toString(),
-                session.customer?.toString(),
+            await this.handleCheckoutSessionCompleted(
+                event.data.object as Stripe.Checkout.Session,
             );
-            await this.handleCheckoutSessionCompleted(session);
+        }
+
+        if (event.type === "checkout.session.expired") {
+            await this.handleCheckoutSessionExpired(
+                event.data.object as Stripe.Checkout.Session,
+            );
+        }
+
+        if (event.type === "charge.dispute.created") {
+            const dispute = event.data.object as Stripe.Dispute;
+            this.logger.error(
+                `Stripe dispute ${dispute.id} opened for charge ${dispute.charge} (${dispute.amount} ${dispute.currency}): respond in the Stripe dashboard.`,
+            );
         }
 
         return { received: true };
+    }
+
+    private getSessionOrderIds(session: Stripe.Checkout.Session) {
+        return session.metadata?.checkoutMode === "buy_now"
+            ? (this.numberArrayFromMetadata(session.metadata?.orderId) ?? [])
+            : (this.numberArrayFromMetadata(session.metadata?.orderIds) ?? []);
     }
 
     private async handleCheckoutSessionCompleted(
@@ -783,62 +828,55 @@ export class StripeService {
             return;
         }
 
-        if (session.metadata?.checkoutMode === "buy_now") {
-            await this.handleBuyNowCheckoutSessionCompleted(session);
-            return;
-        }
-
-        const orderIds = session.metadata?.orderIds
-            ? session.metadata.orderIds
-                  .split(",")
-                  .map((id) => Number(id.trim()))
-                  .filter((id) => Number.isInteger(id) && id > 0)
-            : [];
-        const cartId = Number(session.metadata?.cartId);
-        const cartItemIds = this.numberArrayFromMetadata(
-            session.metadata?.cartItemIds,
+        const transaction = await this.paymentService.markSucceeded(
+            session.id,
+            session.payment_intent?.toString(),
+            session.customer?.toString(),
         );
+
+        const isBuyNow = session.metadata?.checkoutMode === "buy_now";
+        const orderIds = this.getSessionOrderIds(session);
 
         if (orderIds.length === 0) {
             this.logger.warn(
-                `Skipping checkout.session.completed ${session.id}: missing orderIds metadata.`,
+                `Skipping checkout.session.completed ${session.id}: missing order metadata.`,
             );
             return;
         }
 
         try {
-            // Step 1: Confirm each order (PENDING -> CONFIRMED)
-            // For cart orders, don't set stripe_checkout_session_id (unique constraint allows only one order per session)
-            for (const orderId of orderIds) {
-                await this.orderService.confirmOrder(orderId, undefined, false);
-            }
+            // Step 1: Confirm orders and mark items sold
+            const { confirmed, alreadySettled, rejected } =
+                await this.orderService.finalizePaidOrders({
+                    orderIds,
+                    cartId: this.numberFromMetadata(session.metadata?.cartId),
+                    cartItemIds: this.numberArrayFromMetadata(session.metadata?.cartItemIds),
+                    couponId: this.numberFromMetadata(session.metadata?.couponId),
+                    // Buy-now has a 1:1 mapping. A cart session spans several orders, and the
+                    // column is unique, so for carts the session lives on the payment transaction.
+                    stripeCheckoutSessionId: isBuyNow ? session.id : undefined,
+                    paymentTransactionId: transaction?.id,
+                });
 
             // Step 2: Link payment transaction to orders
-            await this.paymentService.linkOrderToSession(
-                session.id,
-                orderIds[0],
-            );
+            await this.paymentService.linkOrderToSession(session.id, orderIds[0]);
 
-            // Step 3: Delete cart items for this cart
-            if (cartId) {
-                await this.prismaService.cartItem.deleteMany({
-                    where: {
-                        cartId,
-                        ...(cartItemIds ? { id: { in: cartItemIds } } : {}),
-                    },
-                });
+            // Step 3: The buyer paid for something that cannot be delivered: return that money
+            for (const orderId of rejected) {
+                const refund = await this.refundOrderPayment(orderId);
+                if (refund.refunded) {
+                    await this.orderService.notifyPaymentReturned(orderId, refund);
+                }
             }
 
-            // Step 4: Mark products as sold
-            for (const orderId of orderIds) {
-                await this.orderService.markProductsSoldForOrder(orderId);
+            // Step 4: Split the platform charge to each seller account
+            const settled = [...confirmed, ...alreadySettled];
+            if (!isBuyNow && settled.length) {
+                await this.transferCartPaymentToSellers(session, settled);
             }
-
-            // Step 5: Split the platform charge to each seller account
-            await this.transferCartPaymentToSellers(session, orderIds);
 
             this.logger.log(
-                `Confirmed ${orderIds.length} orders for paid checkout session ${session.id}.`,
+                `Settled checkout session ${session.id}: ${confirmed.length} confirmed, ${rejected.length} refunded.`,
             );
         } catch (err: any) {
             this.logger.error(
@@ -849,44 +887,55 @@ export class StripeService {
         }
     }
 
-    private async handleBuyNowCheckoutSessionCompleted(
+    private async handleCheckoutSessionExpired(
         session: Stripe.Checkout.Session,
     ) {
-        if (session.payment_status !== "paid") {
-            this.logger.warn(
-                `Skipping buy_now checkout.session.completed ${session.id}: payment_status is ${session.payment_status ?? "unknown"}.`,
-            );
-            return;
+        await this.orderService.cancelPendingPaymentOrders(
+            this.getSessionOrderIds(session),
+            "Checkout session expired without payment.",
+        );
+
+        const transaction = await this.paymentService.findBySessionId(session.id);
+        if (transaction?.status === PaymentStatus.PENDING) {
+            await this.paymentService.updateProviderStatus(transaction.id, {
+                status: PaymentStatus.CANCELLED,
+                paymentStatus: "expired",
+            });
         }
+    }
 
-        const orderId = Number(session.metadata?.orderId);
+    /**
+     * Webhooks can be lost. Anything still open after its session must have ended is settled from
+     * Stripe's own record, so a paid buyer always gets an order and abandoned items go back on sale.
+     */
+    @Cron(CronExpression.EVERY_10_MINUTES)
+    async reconcileOpenCheckoutSessions() {
+        const cutoff = new Date(Date.now() - (CHECKOUT_SESSION_MINUTES + 5) * 60 * 1000);
+        const transactions = await this.prismaService.paymentTransaction.findMany({
+            where: {
+                provider: PaymentProvider.STRIPE,
+                status: PaymentStatus.PENDING,
+                createdAt: { lt: cutoff },
+                stripe_session_id: { not: null },
+            },
+            orderBy: { createdAt: "asc" },
+            take: 50,
+        });
 
-        if (!orderId) {
-            this.logger.warn(
-                `Skipping buy_now checkout.session.completed ${session.id}: missing orderId metadata.`,
-            );
-            return;
-        }
-
-        try {
-            // Step 1: Confirm order (PENDING -> CONFIRMED) with session ID (buy-now has 1:1 mapping)
-            await this.orderService.confirmOrder(orderId, session.id, true);
-
-            // Step 2: Link payment transaction to order
-            await this.paymentService.linkOrderToSession(session.id, orderId);
-
-            // Step 3: Mark product as sold
-            await this.orderService.markProductsSoldForOrder(orderId);
-
-            this.logger.log(
-                `Confirmed Buy Now order ${orderId} for paid checkout session ${session.id}.`,
-            );
-        } catch (err: any) {
-            this.logger.error(
-                `Failed to process buy-now checkout session ${session.id}`,
-                err?.stack ?? err,
-            );
-            throw err;
+        for (const transaction of transactions) {
+            try {
+                const session = await this.stripe.checkout.sessions.retrieve(transaction.stripe_session_id!);
+                if (session.payment_status === "paid") {
+                    await this.handleCheckoutSessionCompleted(session);
+                } else if (session.status !== "open") {
+                    await this.handleCheckoutSessionExpired(session);
+                }
+            } catch (err: any) {
+                this.logger.error(
+                    `Failed to reconcile checkout session ${transaction.stripe_session_id}`,
+                    err?.stack ?? err,
+                );
+            }
         }
     }
 
@@ -928,9 +977,16 @@ export class StripeService {
         const cartSplitPlan = Array.isArray(transactionMetadata.cartSplitPlan)
             ? transactionMetadata.cartSplitPlan
             : [];
-        const transfers: any[] = [];
+        // Stripe forgets idempotency keys after a day but retries webhooks for longer
+        const transfers: any[] = Array.isArray(transactionMetadata.cartTransfers)
+            ? [...transactionMetadata.cartTransfers]
+            : [];
 
         for (const order of orders) {
+            if (this.getCartTransferForOrder(transactionMetadata, order.id)) {
+                continue;
+            }
+
             if (
                 !order.seller.stripe_onboarding_complete ||
                 !order.seller.stripe_account_id
@@ -1118,7 +1174,7 @@ export class StripeService {
         }
 
         const order = request.orderItem.order;
-        const transaction = await this.findPaymentTransactionForOrder(order.id);
+        const transaction = await this.paymentService.findPaidTransactionForOrder(order.id, order.userId);
         if (!transaction?.stripe_payment_intent_id) {
             throw new BadRequestException(
                 `No paid Stripe transaction found for order ${order.id}.`,
@@ -1141,7 +1197,13 @@ export class StripeService {
             };
         }
 
-        const refundAmountUsd = requestedAmount ?? request.orderItem.price;
+        const refundAmountUsd = requestedAmount ?? Math.min(request.orderItem.price, order.total);
+        if (refundAmountUsd > order.total) {
+            throw new BadRequestException(
+                "Refund amount exceeds the total paid for this order.",
+            );
+        }
+
         const refundCurrency = this.currencyPreferenceFromStripeCurrency(
             transaction.currency,
         );
@@ -1156,8 +1218,7 @@ export class StripeService {
             );
         }
 
-        const previousRefunds = this.getReturnRefunds(metadata);
-        const previousRefundedCents = previousRefunds.reduce(
+        const previousRefundedCents = this.getReturnRefunds(metadata).reduce(
             (sum, refund) => sum + (Number(refund.amountCents) || 0),
             0,
         );
@@ -1196,17 +1257,20 @@ export class StripeService {
             transferReversalId = await this.reverseCartSellerTransfer(
                 metadata,
                 {
-                    returnRequestId,
+                    idempotencyKey: `return-transfer-reversal-${returnRequestId}`,
                     orderId: order.id,
-                    orderItemId: request.orderItemId,
                     refundAmountCents,
                     sellerTier: order.seller.seller_tier,
+                    metadata: {
+                        returnRequestId: String(returnRequestId),
+                        orderId: String(order.id),
+                        orderItemId: String(request.orderItemId),
+                    },
                 },
             );
         }
 
-        const totalRefundedCents = previousRefundedCents + refundAmountCents;
-        const refundRecord = {
+        await this.recordRefund(transaction, metadata, {
             returnRequestId,
             orderId: order.id,
             orderItemId: request.orderItemId,
@@ -1217,24 +1281,6 @@ export class StripeService {
             amountUsd: refundAmountUsd,
             currency: transaction.currency,
             createdAt: new Date().toISOString(),
-        };
-
-        await this.prismaService.paymentTransaction.update({
-            where: { id: transaction.id },
-            data: {
-                status:
-                    totalRefundedCents >= transactionAmountCents
-                        ? PaymentStatus.REFUNDED
-                        : PaymentStatus.SUCCEEDED,
-                payment_status:
-                    totalRefundedCents >= transactionAmountCents
-                        ? "refunded"
-                        : "partially_refunded",
-                metadata: {
-                    ...metadata,
-                    returnRefunds: [...previousRefunds, refundRecord],
-                },
-            },
         });
 
         return {
@@ -1247,14 +1293,218 @@ export class StripeService {
         };
     }
 
+    /**
+     * Returns everything the buyer has not already had back for an order: used when a paid order
+     * is cancelled, or when a payment arrives for an order that can no longer be fulfilled.
+     * Safe to repeat, because a redelivered webhook lands here too.
+     */
+    async refundOrderPayment(orderId: number) {
+        const order = await this.prismaService.order.findUnique({
+            where: { id: orderId },
+            include: { seller: { select: { seller_tier: true } } },
+        });
+
+        if (!order) {
+            throw new NotFoundException(`Order with ID ${orderId} not found`);
+        }
+
+        const transaction = await this.paymentService.findPaidTransactionForOrder(order.id, order.userId);
+        if (!transaction?.stripe_payment_intent_id) {
+            this.logger.warn(`No paid Stripe transaction found for order ${order.id}; nothing to refund.`);
+            return { refunded: false };
+        }
+
+        const metadata = this.toMetadataObject(transaction.metadata);
+        const orderRefunds = this.getReturnRefunds(metadata).filter(
+            (refund) => Number(refund.orderId) === order.id,
+        );
+        if (orderRefunds.some((refund) => refund.kind === ORDER_CANCELLATION_REFUND)) {
+            return { refunded: false, already_refunded: true };
+        }
+
+        const isBuyNow =
+            this.getMetadataString(metadata.checkoutMode) === "buy_now" ||
+            Boolean(order.stripe_checkout_session_id);
+        const plannedSplit = this.getCartSplitPlan(metadata).find(
+            (plan) => Number(plan.orderId) === order.id,
+        );
+        const orderAmountCents = isBuyNow
+            ? Math.round(transaction.amount * 100)
+            : Number(plannedSplit?.orderAmountCents) || Math.round(order.total * 100);
+        const alreadyRefundedCents = orderRefunds.reduce(
+            (sum, refund) => sum + (Number(refund.amountCents) || 0),
+            0,
+        );
+        const refundAmountCents = orderAmountCents - alreadyRefundedCents;
+
+        if (refundAmountCents <= 0) {
+            return { refunded: false, already_refunded: true };
+        }
+
+        const refund = await this.stripe.refunds.create(
+            {
+                payment_intent: transaction.stripe_payment_intent_id,
+                amount: refundAmountCents,
+                ...(isBuyNow
+                    ? { reverse_transfer: true, refund_application_fee: true }
+                    : {}),
+                metadata: { orderId: String(order.id) },
+            },
+            { idempotencyKey: `order-refund-${order.id}` },
+        );
+
+        const transferReversalId = isBuyNow
+            ? undefined
+            : await this.reverseCartSellerTransfer(metadata, {
+                  idempotencyKey: `order-transfer-reversal-${order.id}`,
+                  orderId: order.id,
+                  refundAmountCents,
+                  sellerTier: order.seller.seller_tier,
+                  metadata: { orderId: String(order.id) },
+              });
+
+        const refundAmount = refundAmountCents / 100;
+        await this.recordRefund(transaction, metadata, {
+            kind: ORDER_CANCELLATION_REFUND,
+            orderId: order.id,
+            refundId: refund.id,
+            transferReversalId,
+            amount: refundAmount,
+            amountCents: refundAmountCents,
+            amountUsd: this.getOrderRefundUsd(order.total, orderAmountCents, refundAmountCents),
+            currency: transaction.currency,
+            createdAt: new Date().toISOString(),
+        });
+
+        return {
+            refunded: true,
+            stripe_refund_id: refund.id,
+            refund_amount: refundAmount,
+            currency: transaction.currency,
+        };
+    }
+
+    /**
+     * Pays the seller of a financed order. TBI settles with the platform outside Stripe and sends
+     * no settlement signal, so an admin triggers this once the bank's money has arrived. It is
+     * sent from the platform's Stripe balance, which must hold enough in the payment currency.
+     */
+    async payOutFinancedOrder(orderId: number) {
+        const order = await this.prismaService.order.findUnique({
+            where: { id: orderId },
+            include: {
+                seller: { select: { stripe_account_id: true } },
+                items: { select: { returnRequests: { select: { status: true } } } },
+            },
+        });
+
+        if (!order) {
+            throw new NotFoundException(`Order with ID ${orderId} not found`);
+        }
+        if (order.seller_payout_at) {
+            throw new BadRequestException("This seller has already been paid for this order.");
+        }
+        if (order.status !== OrderStatus.DELIVERED) {
+            throw new BadRequestException("A seller is paid out once the order has been delivered.");
+        }
+        if (!order.seller.stripe_account_id) {
+            throw new BadRequestException("This seller has no connected Stripe account.");
+        }
+
+        const returnInProgress = order.items
+            .flatMap((item) => item.returnRequests)
+            .some((request) => request.status !== ReturnStatus.COMPLETED && request.status !== ReturnStatus.REJECTED);
+        if (returnInProgress) {
+            throw new BadRequestException("Resolve the open return on this order before paying the seller.");
+        }
+
+        const transaction = await this.paymentService.findPaidTransactionForOrder(order.id, order.userId);
+        if (transaction?.provider !== PaymentProvider.TBI_CREDIT) {
+            throw new BadRequestException("Only TBI Credit orders are paid out manually.");
+        }
+
+        const payout = this.paymentService.getManualPayout(transaction, order);
+        const amountCents = Math.round(payout.amount * 100);
+        if (amountCents <= 0) {
+            throw new BadRequestException("There is nothing to pay out for this order.");
+        }
+
+        const transfer = await this.stripe.transfers.create(
+            {
+                amount: amountCents,
+                currency: payout.currency,
+                destination: order.seller.stripe_account_id,
+                metadata: {
+                    orderId: String(order.id),
+                    sellerId: String(order.sellerId),
+                    paymentTransactionId: String(transaction.id),
+                },
+            },
+            { idempotencyKey: `tbi-payout-${order.id}` },
+        );
+
+        await this.prismaService.order.update({
+            where: { id: order.id },
+            data: { seller_payout_at: new Date(), seller_payout_reference: transfer.id },
+        });
+
+        try {
+            await this.notificationService.create(
+                order.sellerId,
+                "Payout Sent",
+                `Your payout for order #${order.id} is on its way to your Stripe account.`,
+                NotificationType.ORDER,
+            );
+        } catch (err: any) {
+            this.logger.error("Failed to send payout notification", err?.stack ?? err);
+        }
+
+        return { order_id: order.id, transfer_id: transfer.id, amount: payout.amount, currency: payout.currency };
+    }
+
+    private getOrderRefundUsd(orderTotalUsd: number, orderAmountCents: number, refundAmountCents: number) {
+        return Number(((orderTotalUsd * refundAmountCents) / orderAmountCents).toFixed(2));
+    }
+
+    private async recordRefund(
+        transaction: { id: number; amount: number },
+        metadata: Record<string, any>,
+        refundRecord: Record<string, any>,
+    ) {
+        const refunds = [...this.getReturnRefunds(metadata), refundRecord];
+        const refundedCents = refunds.reduce(
+            (sum, refund) => sum + (Number(refund.amountCents) || 0),
+            0,
+        );
+        const isFullyRefunded = refundedCents >= Math.round(transaction.amount * 100);
+
+        await this.prismaService.paymentTransaction.update({
+            where: { id: transaction.id },
+            data: {
+                status: isFullyRefunded ? PaymentStatus.REFUNDED : PaymentStatus.SUCCEEDED,
+                payment_status: isFullyRefunded ? "refunded" : "partially_refunded",
+                metadata: { ...metadata, returnRefunds: refunds },
+            },
+        });
+    }
+
+    private getCartSplitPlan(metadata: Record<string, any>): any[] {
+        return Array.isArray(metadata.cartSplitPlan) ? metadata.cartSplitPlan : [];
+    }
+
+    /**
+     * The buyer's refund has already gone through by the time this runs, so a failed reversal (for
+     * example an empty seller balance) must not surface as a failed refund. It is reported for
+     * manual recovery from the seller instead.
+     */
     private async reverseCartSellerTransfer(
         metadata: Record<string, any>,
         params: {
-            returnRequestId: number;
+            idempotencyKey: string;
             orderId: number;
-            orderItemId: number;
             refundAmountCents: number;
             sellerTier: SellerTier;
+            metadata: Record<string, string>;
         },
     ) {
         const transfer = this.getCartTransferForOrder(metadata, params.orderId);
@@ -1273,78 +1523,23 @@ export class StripeService {
             return undefined;
         }
 
-        const reversal = await this.stripe.transfers.createReversal(
-            transfer.transferId,
-            {
-                amount: split.sellerTransferAmount,
-                metadata: {
-                    returnRequestId: String(params.returnRequestId),
-                    orderId: String(params.orderId),
-                    orderItemId: String(params.orderItemId),
+        try {
+            const reversal = await this.stripe.transfers.createReversal(
+                transfer.transferId,
+                {
+                    amount: split.sellerTransferAmount,
+                    metadata: params.metadata,
                 },
-            },
-            {
-                idempotencyKey: `return-transfer-reversal-${params.returnRequestId}`,
-            },
-        );
+                { idempotencyKey: params.idempotencyKey },
+            );
 
-        return reversal.id;
-    }
-
-    private async findPaymentTransactionForOrder(orderId: number) {
-        const directTransaction =
-            await this.prismaService.paymentTransaction.findFirst({
-                where: {
-                    orderId,
-                    status: {
-                        in: [PaymentStatus.SUCCEEDED, PaymentStatus.REFUNDED],
-                    },
-                    stripe_payment_intent_id: { not: null },
-                },
-                orderBy: { createdAt: "desc" },
-            });
-
-        if (directTransaction) {
-            return directTransaction;
+            return reversal.id;
+        } catch (err: any) {
+            this.logger.error(
+                `Buyer was refunded but transfer ${transfer.transferId} for order ${params.orderId} could not be reversed: ${err?.message}`,
+            );
+            return undefined;
         }
-
-        const transactions =
-            await this.prismaService.paymentTransaction.findMany({
-                where: {
-                    status: {
-                        in: [PaymentStatus.SUCCEEDED, PaymentStatus.REFUNDED],
-                    },
-                    stripe_payment_intent_id: { not: null },
-                },
-                orderBy: { createdAt: "desc" },
-            });
-
-        return (
-            transactions.find((transaction) =>
-                this.paymentTransactionIncludesOrder(
-                    transaction.metadata,
-                    orderId,
-                ),
-            ) ?? null
-        );
-    }
-
-    private paymentTransactionIncludesOrder(
-        metadata: unknown,
-        orderId: number,
-    ) {
-        const metadataObject = this.toMetadataObject(metadata);
-        const orderIds = this.getMetadataString(metadataObject.orderIds)
-            ?.split(",")
-            .map((id) => Number(id.trim()))
-            .filter((id) => Number.isInteger(id));
-        if (orderIds?.includes(orderId)) {
-            return true;
-        }
-
-        return (
-            this.getCartTransferForOrder(metadataObject, orderId) !== undefined
-        );
     }
 
     private async mergePaymentTransactionMetadata(

@@ -1,4 +1,6 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AuthModule } from './modules/auth/auth.module';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -12,6 +14,7 @@ import stripeConfig from './config/stripe.config';
 import legitgrailsConfig from './config/legitgrails.config';
 import firebaseConfig from './config/firebase.config';
 import tbiCreditConfig from './config/tbi-credit.config';
+import { validateEnv } from './config/env.validation';
 import { ProfileModule } from './modules/profile/profile.module';
 import { FileUploadModule } from './modules/file-upload/file-upload.module';
 import { CategoryModule } from './modules/category/category.module';
@@ -42,7 +45,8 @@ import { TbiCreditModule } from './modules/tbi-credit/tbi-credit.module';
   imports: [
     SentryModule.forRoot(),
     ScheduleModule.forRoot(),
-    ConfigModule.forRoot({ isGlobal: true, load: [dbConfig, mailerConfig, jwtConfig, stripeConfig, legitgrailsConfig, firebaseConfig, tbiCreditConfig] }),
+    ConfigModule.forRoot({ isGlobal: true, validate: validateEnv, load: [dbConfig, mailerConfig, jwtConfig, stripeConfig, legitgrailsConfig, firebaseConfig, tbiCreditConfig] }),
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 300 }]),
     PrismaModule,
     AuthModule,
     ProfileModule,
@@ -70,6 +74,6 @@ import { TbiCreditModule } from './modules/tbi-credit/tbi-credit.module';
     TbiCreditModule,
   ],
   controllers: [AppController],
-  providers: [AppService, CurrencyConversionService],
+  providers: [AppService, CurrencyConversionService, { provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}

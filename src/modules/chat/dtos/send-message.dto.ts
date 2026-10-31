@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString } from "class-validator";
+import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, MaxLength } from "class-validator";
 import { MessageType } from "generated/prisma/client";
 
 export class SendMessageDto {
@@ -10,11 +10,13 @@ export class SendMessageDto {
 
     @IsString()
     @IsOptional()
+    @MaxLength(5000)
     @ApiPropertyOptional({ description: "Message content text" })
     message?: string;
 
     @IsString()
     @IsOptional()
+    @MaxLength(2048)
     @ApiPropertyOptional({ description: "Attached file URL if any" })
     file_url?: string;
 
