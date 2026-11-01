@@ -1,4 +1,5 @@
 const DEVELOPMENT_ORIGINS = ["http://localhost:2005", "http://localhost:2006"];
+const PRODUCTION_ORIGINS = ["https://bestkid.eu"];
 
 let allowedOrigins: Set<string> | undefined;
 
@@ -10,7 +11,9 @@ function getAllowedOrigins() {
             .filter(Boolean);
 
         allowedOrigins = new Set(
-            process.env.NODE_ENV === "production" ? configured : [...configured, ...DEVELOPMENT_ORIGINS],
+            process.env.NODE_ENV === "production"
+                ? [...configured, ...PRODUCTION_ORIGINS]
+                : [...configured, ...DEVELOPMENT_ORIGINS],
         );
     }
 
