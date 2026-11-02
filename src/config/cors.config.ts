@@ -1,5 +1,5 @@
 const DEVELOPMENT_ORIGINS = ["http://localhost:2005", "http://localhost:2006"];
-const PRODUCTION_ORIGINS = ["https://bestkid.eu"];
+const PRODUCTION_ORIGINS = ["https://bestkid.eu","https://admin.bestkid.eu"];
 
 let allowedOrigins: Set<string> | undefined;
 
